@@ -58,6 +58,62 @@ enum Snapshot {
             }
             RunLoop.main.run()
         }
+        if args.contains("--record-test") {
+            // Enregistrement réel : la synthèse vocale lit un cours, le micro l'écoute, la transcription
+            // s'écrit dans un document ; marque-page au milieu ; puis réécoute.
+            Task { @MainActor in
+                let document = EZDocument()
+                document.info = DocumentInfo(subject: "Histoire", context: "Cours sur Robespierre et la Terreur")
+                document.storage.setAttributedString(NSAttributedString(string: "Mes notes", attributes: LessonStyle.attributes(.body)))
+                let layoutManager = ClaudeLayoutManager()
+                document.storage.addLayoutManager(layoutManager)
+                let container = NSTextContainer(size: NSSize(width: 600, height: 100_000))
+                layoutManager.addTextContainer(container)
+                let view = PageTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), textContainer: container)
+                let editor = EditorController()
+                editor.attach(textView: view, storage: document.storage, document: document)
+                editor.toggleRecording()
+                var waited = 0
+                while editor.recording == .preparing && waited < 120 { try? await Task.sleep(for: .seconds(1)); waited += 1 }
+                guard case .on = editor.recording else { print("ÉCHEC du démarrage :", editor.errorMessage ?? "?"); exit(1) }
+                print("enregistrement démarré après", waited, "s")
+                let say = Process()
+                say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+                say.arguments = ["-v", "Thomas", "En 1793, Robespierre et le Comité de salut public instaurent la Terreur. Des milliers de suspects sont guillotinés. La Terreur prend fin le 27 juillet 1794 avec la chute de Robespierre."]
+                try? say.run()
+                try? await Task.sleep(for: .seconds(6))
+                editor.insertMark(.important)
+                say.waitUntilExit()
+                try? await Task.sleep(for: .seconds(3))
+                await editor.stopRecording()
+                let text = document.storage.string
+                print("TEXTE :", text.debugDescription)
+                var audio: String?
+                var marks = 0
+                document.storage.enumerateAttribute(.ezAudio, in: NSRange(location: 0, length: document.storage.length)) { v, _, _ in
+                    if let v = v as? String, audio == nil { audio = v }
+                }
+                document.storage.enumerateAttribute(.ezMark, in: NSRange(location: 0, length: document.storage.length)) { v, _, _ in
+                    if v != nil { marks += 1 }
+                }
+                print("marque-pages :", marks, "| repère audio :", audio ?? "aucun")
+                if let id = audio?.split(separator: "@").first {
+                    let url = AudioStore.url(for: String(id))
+                    let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+                    print("fichier audio :", url.lastPathComponent, size, "octets")
+                    if let index = document.storage.string.range(of: "robespierre", options: .caseInsensitive).map({ NSRange($0, in: document.storage.string).location }) {
+                        editor.replayAudio(at: index)
+                        try? await Task.sleep(for: .seconds(2))
+                        print("réécoute :", editor.isPlaying ? "en cours" : "arrêtée", editor.errorMessage ?? "")
+                        editor.stopAudio()
+                    }
+                    try? FileManager.default.removeItem(at: url)
+                    print("fichier audio de test supprimé")
+                }
+                exit(0)
+            }
+            RunLoop.main.run()
+        }
         if args.contains("--bold-test") {
             Task { @MainActor in
                 let document = EZDocument()

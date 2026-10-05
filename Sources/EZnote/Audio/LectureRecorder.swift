@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import Speech
 
 /// Enregistre le micro, garde l'audio du cours et le transcrit en direct, sur le Mac (SpeechAnalyzer de
@@ -22,8 +23,8 @@ final class LectureRecorder {
 
     /// Texte provisoire (peut encore changer).
     var onVolatile: ((String) -> Void)?
-    /// Texte définitif et seconde du cours où il commence (pour le réécouter).
-    var onFinal: ((String, Double) -> Void)?
+    /// Texte définitif, seconde du cours où il commence (pour le réécouter) et où il finit.
+    var onFinal: ((String, Double, Double) -> Void)?
 
     private let engine = AVAudioEngine()
     private var analyzer: SpeechAnalyzer?
@@ -32,6 +33,10 @@ final class LectureRecorder {
     private var audioFile: AVAudioFile?
 
     private(set) var isRecording = false
+    private var startedAt: Date?
+
+    /// Seconde du cours en ce moment (même origine que les temps de la transcription).
+    var elapsed: Double { startedAt.map { Date.now.timeIntervalSince($0) } ?? 0 }
 
     /// `vocabulary` : mots du contexte (matière, noms propres…) qui aident à les reconnaître.
     /// `audioURL` : où garder l'audio du cours.
@@ -75,7 +80,11 @@ final class LectureRecorder {
             do {
                 for try await result in transcriber.results {
                     let text = String(result.text.characters)
-                    if result.isFinal { self?.onFinal?(text, result.range.start.seconds) } else { self?.onVolatile?(text) }
+                    if result.isFinal {
+                        self?.onFinal?(text, result.range.start.seconds, CMTimeRangeGetEnd(result.range).seconds)
+                    } else {
+                        self?.onVolatile?(text)
+                    }
                 }
             } catch {}
         }
@@ -96,6 +105,7 @@ final class LectureRecorder {
         }
         engine.prepare()
         try engine.start()
+        startedAt = .now
         try await analyzer.start(inputSequence: stream)
 
         self.analyzer = analyzer

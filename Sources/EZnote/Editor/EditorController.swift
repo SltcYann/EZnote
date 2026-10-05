@@ -42,6 +42,8 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
     var volatileLength = 0
     var writingTranscript = false
     var audioID: String?
+    /// Marque-pages posés pendant le cours, en attente de la phrase prononcée à ce moment-là.
+    var pendingMarks: [(mark: LessonStyle.Mark, time: Double)] = []
 
     var isWorking: Bool { phase != .idle }
     var isRecording: Bool { recording != .off }

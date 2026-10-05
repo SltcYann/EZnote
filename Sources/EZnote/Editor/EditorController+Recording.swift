@@ -14,9 +14,10 @@ extension EditorController {
             Task {
                 do {
                     recorder.onVolatile = { [weak self] in self?.showVolatile($0) }
-                    recorder.onFinal = { [weak self] text, seconds in self?.appendFinal(text, at: seconds) }
+                    recorder.onFinal = { [weak self] text, start, end in self?.appendFinal(text, from: start, to: end) }
                     try await recorder.start(vocabulary: vocabulary(), audioURL: AudioStore.url(for: id))
                     audioID = id
+                    pendingMarks = []
                     let original = NSAttributedString(attributedString: storage)
                     textView.breakUndoCoalescing()
                     textView.allowsUndo = false
@@ -45,9 +46,10 @@ extension EditorController {
     func stopRecording() async {
         guard case .on = recording else { return }
         await recorder.stop()
-        writeTranscript { storage, _ in
+        writeTranscript { storage, attributes in
             storage.deleteCharacters(in: NSRange(location: transcriptEnd, length: volatileLength))
             volatileLength = 0
+            flushMarks(upTo: .infinity, in: storage, attributes: attributes)
         }
         recording = .off
         textView?.allowsUndo = true
@@ -73,6 +75,7 @@ extension EditorController {
         recorder.onFinal = nil
         Task { await recorder.stop() }
         volatileLength = 0
+        pendingMarks = []
         recording = .off
         textView?.allowsUndo = true
     }
@@ -102,22 +105,40 @@ extension EditorController {
         }
     }
 
-    private func appendFinal(_ text: String, at seconds: Double) {
+    private func appendFinal(_ text: String, from start: Double, to end: Double) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         writeTranscript { storage, attributes in
             storage.deleteCharacters(in: NSRange(location: transcriptEnd, length: volatileLength))
             volatileLength = 0
-            guard !text.isEmpty else { return }
-            var piece = spaced(text, in: storage)
-            // Nouveau paragraphe toutes les ~600 lettres, à la fin d'une phrase.
+            // Marque-page posé pendant un silence, avant cette phrase.
+            flushMarks(upTo: start, in: storage, attributes: attributes)
+            if !text.isEmpty {
+                var piece = spaced(text, in: storage)
+                // Nouveau paragraphe toutes les ~600 lettres, à la fin d'une phrase.
+                let ns = storage.string as NSString
+                let paragraph = ns.paragraphRange(for: NSRange(location: max(0, transcriptEnd - 1), length: 0))
+                if paragraph.length > 600, let last = text.last, ".?!".contains(last) { piece += "\n" }
+                var phrase = attributes
+                if let audioID, start.isFinite { phrase[.ezAudio] = "\(audioID)@\(start)" }
+                let attributed = NSAttributedString(string: piece, attributes: phrase)
+                storage.insert(attributed, at: transcriptEnd)
+                transcriptEnd += attributed.length
+            }
+            // Marque-page posé pendant cette phrase : juste après elle.
+            flushMarks(upTo: end.isFinite ? end : .infinity, in: storage, attributes: attributes)
+        }
+    }
+
+    /// Insère au bout de la transcription les marque-pages posés avant `time` (en secondes de cours).
+    private func flushMarks(upTo time: Double, in storage: NSTextStorage, attributes: [NSAttributedString.Key: Any]) {
+        while let first = pendingMarks.first, first.time <= time {
+            pendingMarks.removeFirst()
             let ns = storage.string as NSString
-            let paragraph = ns.paragraphRange(for: NSRange(location: max(0, transcriptEnd - 1), length: 0))
-            if paragraph.length > 600, let last = text.last, ".?!".contains(last) { piece += "\n" }
-            var phrase = attributes
-            if let audioID, seconds.isFinite { phrase[.ezAudio] = "\(audioID)@\(seconds)" }
-            let attributed = NSAttributedString(string: piece, attributes: phrase)
-            storage.insert(attributed, at: transcriptEnd)
-            transcriptEnd += attributed.length
+            let needsSpace = transcriptEnd > 0 && ![10, 32].contains(ns.character(at: transcriptEnd - 1))
+            let piece = NSMutableAttributedString(string: needsSpace ? " " : "", attributes: attributes)
+            piece.append(first.mark.attributed(base: attributes))
+            storage.insert(piece, at: transcriptEnd)
+            transcriptEnd += piece.length
         }
     }
 
@@ -170,16 +191,8 @@ extension EditorController {
     func insertMark(_ mark: LessonStyle.Mark) {
         guard let storage, let textView else { return }
         if case .on = recording {
-            writeTranscript { storage, attributes in
-                let chip = mark.attributed(base: attributes)
-                let location = transcriptEnd
-                let needsSpace = location > 0 && (storage.string as NSString).character(at: location - 1) != 32
-                    && (storage.string as NSString).character(at: location - 1) != 10
-                let piece = NSMutableAttributedString(string: needsSpace ? " " : "", attributes: attributes)
-                piece.append(chip)
-                storage.insert(piece, at: location)
-                transcriptEnd += piece.length
-            }
+            // Placé à la fin de la phrase prononcée à cet instant, dès qu'elle est transcrite pour de bon.
+            pendingMarks.append((mark, recorder.elapsed))
             return
         }
         guard !isWorking else { return }
