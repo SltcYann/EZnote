@@ -175,7 +175,9 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
 
     func ezify() {
         if isWorking { task?.cancel(); return }
-        guard let apiKey = Keychain.apiKey, !apiKey.isEmpty else { needsAPIKey = true; return }
+        let connection = ClaudeConnection.current
+        let apiKey = Keychain.apiKey ?? ""
+        if connection == .apiKey && apiKey.isEmpty { needsAPIKey = true; return }
         guard let textView, let storage else { return }
         let notes = NotesExporter.markdown(from: storage)
         guard !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -193,7 +195,10 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
             var markdown = ""
             var lastRender = ContinuousClock.now
             do {
-                for try await event in ClaudeClient(apiKey: apiKey).lesson(from: notes, webSearch: webSearch) {
+                let events = connection == .subscription
+                    ? ClaudeCodeClient().lesson(from: notes, webSearch: webSearch)
+                    : ClaudeClient(apiKey: apiKey).lesson(from: notes, webSearch: webSearch)
+                for try await event in events {
                     guard let self else { return }
                     switch event {
                     case .searching:
