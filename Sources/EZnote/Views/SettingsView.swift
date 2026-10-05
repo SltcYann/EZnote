@@ -19,17 +19,20 @@ struct SettingsView: View {
 private struct StudiesSettings: View {
     @AppStorage("studyLevel") private var level = ""
     @AppStorage("studyField") private var field = ""
+    @AppStorage("studyContext") private var about = ""
 
     var body: some View {
         VStack(spacing: UY.space18) {
             UYSymbol(name: "graduationcap.fill", size: 26).foregroundStyle(UY.claude)
-            Text("Claude s'en sert pour comprendre tes notes et deviner ce que le professeur a voulu dire quand la transcription est floue. La matière, il la déduit de tes notes et du nom du document.")
+            Text("L'IA s'en sert partout (EZifier, fiches, quiz, questions) pour comprendre tes notes et deviner ce que le professeur a voulu dire, et la dictée pour reconnaître ton vocabulaire. Chaque document a aussi son propre contexte (bouton livre de la barre d'outils).")
                 .font(UY.footnote)
                 .foregroundStyle(UY.inkSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             GlassField(placeholder: "Niveau (ex. Terminale, L2, Master 1)", text: $level)
             GlassField(placeholder: "Études (ex. Droit, Médecine, Prépa MPSI)", text: $field)
+            ContextEditor(text: $about, placeholder: "Ton école, tes cours, tes profs, tes objectifs, ce qui t'aide à comprendre…")
+                .frame(height: 110)
         }
         .padding(UY.space32)
     }
@@ -65,6 +68,11 @@ private struct DocumentsSettings: View {
                 Button("Choisir…") { _ = SaveFolder.choose() }
                     .buttonStyle(.glassProminent)
                     .tint(UY.claude)
+                if SaveFolder.iCloudAvailable && folder != SaveFolder.iCloudFolder.path {
+                    Button("iCloud Drive") { SaveFolder.useICloud() }
+                        .buttonStyle(.glass)
+                        .help("Range tes cours dans iCloud Drive › EZnote : ils se synchronisent sur tous tes appareils")
+                }
                 if !folder.isEmpty {
                     Button("Afficher") { NSWorkspace.shared.open(URL(fileURLWithPath: folder)) }
                         .buttonStyle(.glass)
@@ -101,7 +109,7 @@ private struct ClaudeSettings: View {
             case .local: LocalModelSettings()
             }
 
-            Toggle("Autoriser Claude à chercher sur le web", isOn: $webSearch)
+            Toggle("Autoriser l'IA à chercher sur le web (faits, exemples et contexte du cours)", isOn: $webSearch)
                 .toggleStyle(.switch)
                 .font(UY.subheadline)
                 .disabled(connection == ClaudeConnection.local.rawValue)

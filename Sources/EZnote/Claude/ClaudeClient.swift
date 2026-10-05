@@ -21,29 +21,26 @@ enum ClaudeError: LocalizedError {
 
 /// Appel à l'API Messages de Claude en streaming (SSE), avec la recherche web côté serveur.
 struct ClaudeClient {
-    enum Event {
-        case searching
-        case text(String)
-        /// Un modèle de secours reprend la réponse depuis le début : le texte reçu jusque-là est à jeter.
-        case restart
-    }
-
     let apiKey: String
     static let model = "claude-opus-5-5"
     private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
-    func lesson(from notes: String, context: LessonPrompt.Context, webSearch: Bool) -> AsyncThrowingStream<Event, Error> {
+    func stream(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let user: [String: Any] = ["role": "user", "content": LessonPrompt.userMessage(notes: notes, context: context)]
+                    var content: [[String: Any]] = request.images.map {
+                        ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": $0.base64EncodedString()]]
+                    }
+                    content.append(["type": "text", "text": request.user])
+                    let user: [String: Any] = ["role": "user", "content": content]
                     var assistant: [[String: Any]] = []
                     // Avec la recherche web, le serveur peut mettre le tour en pause (« pause_turn ») :
                     // on renvoie alors la réponse partielle et il reprend là où il s'était arrêté.
                     for _ in 0..<6 {
                         var messages: [[String: Any]] = [user]
                         if !assistant.isEmpty { messages.append(["role": "assistant", "content": assistant]) }
-                        let (blocks, stopReason) = try await stream(messages: messages, webSearch: webSearch, continuation: continuation)
+                        let (blocks, stopReason) = try await send(messages: messages, request: request, continuation: continuation)
                         assistant += blocks
                         switch stopReason {
                         case "pause_turn": continue
@@ -60,13 +57,14 @@ struct ClaudeClient {
         }
     }
 
-    private func stream(messages: [[String: Any]], webSearch: Bool,
-                        continuation: AsyncThrowingStream<Event, Error>.Continuation) async throws -> ([[String: Any]], String?) {
+    private func send(messages: [[String: Any]], request: AIRequest,
+                      continuation: AsyncThrowingStream<AIEvent, Error>.Continuation) async throws -> ([[String: Any]], String?) {
+        let webSearch = request.webSearch
         var body: [String: Any] = [
             "model": Self.model,
-            "max_tokens": 32000,
+            "max_tokens": request.maxTokens,
             "stream": true,
-            "system": LessonPrompt.system,
+            "system": request.system,
             "output_config": ["effort": "medium"],
             "fallbacks": "default",
             "messages": messages,
@@ -75,16 +73,16 @@ struct ClaudeClient {
             body["tools"] = [["type": "web_search_20260209", "name": "web_search", "max_uses": 5]]
         }
 
-        var request = URLRequest(url: Self.endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 600
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        var urlRequest = URLRequest(url: Self.endpoint)
+        urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = 600
+        urlRequest.setValue("application/json", forHTTPHeaderField: "content-type")
+        urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        urlRequest.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
+        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else {
             var data = Data()

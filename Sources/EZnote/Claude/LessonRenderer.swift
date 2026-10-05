@@ -5,7 +5,19 @@ import AppKit
 enum LessonRenderer {
     private static let numbered = try! NSRegularExpression(pattern: "^(\\d+)[.)]\\s+")
 
-    static func render(_ markdown: String, author: String = "Claude") -> NSAttributedString {
+    /// Retire la ligne « Matière : … » que l'IA met en tête quand la matière n'est pas connue.
+    static func extractSubject(_ markdown: String) -> (subject: String?, lesson: String) {
+        let trimmed = markdown.drop { $0.isWhitespace || $0.isNewline }
+        guard trimmed.lowercased().hasPrefix("matière") || trimmed.lowercased().hasPrefix("matiere") else { return (nil, markdown) }
+        guard let end = trimmed.firstIndex(of: "\n") else { return (nil, "") }   // ligne encore incomplète
+        let line = trimmed[..<end]
+        let subject = line.split(separator: ":", maxSplits: 1).dropFirst().first?
+            .trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "*_."))
+        return (subject, String(trimmed[trimmed.index(after: end)...]))
+    }
+
+    /// `images` : les images des notes, dans l'ordre ; « [Image n] » seul sur sa ligne les replace dans la leçon.
+    static func render(_ markdown: String, author: String = "Claude", images: [NSTextAttachment] = []) -> NSAttributedString {
         let out = NSMutableAttributedString()
         var addition: ClaudeAddition?
         let bullets = NSTextList(markerFormat: .disc, options: 0)
@@ -15,8 +27,7 @@ enum LessonRenderer {
         var lines = markdown.components(separatedBy: "\n")[...]
         while let raw = lines.popFirst() {
             // Les petits modèles locaux écrivent parfois « #### :::claude Exemple Texte… » ou des formules « $CO_2$ ».
-            var line = raw.trimmingCharacters(in: .whitespaces)
-                .replacingOccurrences(of: #"\$([^$\n]+)\$"#, with: "$1", options: .regularExpression)
+            var line = MathText.convertInline(raw.trimmingCharacters(in: .whitespaces))
             if line.hasPrefix("#"), let marker = line.range(of: ":::") { line = String(line[marker.lowerBound...]) }
 
             if line.hasPrefix(":::") {
@@ -24,12 +35,14 @@ enum LessonRenderer {
                 if rest.lowercased().hasPrefix("claude") {
                     let words = rest.dropFirst(6).trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
                     let first = words.first.map(String.init) ?? ""
-                    let known = ["précision", "définition", "exemple", "explication", "attention"]
-                        .contains(first.lowercased().trimmingCharacters(in: .punctuationCharacters))
-                    let kind = known ? first.trimmingCharacters(in: .punctuationCharacters) : "Précision"
-                    addition = ClaudeAddition(kind: kind.prefix(1).uppercased() + kind.dropFirst(), author: author)
+                    let label = words.joined(separator: " ")
+                    // « À retenir » fait deux mots.
+                    let kinds = ["À retenir", "A retenir", "Précision", "Définition", "Exemple", "Explication", "Attention"]
+                    let match = kinds.first { label.lowercased().hasPrefix($0.lowercased()) }
+                    let kind = match.map { $0 == "A retenir" ? "À retenir" : $0 } ?? "Précision"
+                    addition = ClaudeAddition(kind: kind, author: author)
                     // Texte sur la même ligne que le marqueur : premier paragraphe de l'ajout.
-                    let content = known ? (words.count > 1 ? String(words[1]) : "") : words.joined(separator: " ")
+                    let content = match.map { String(label.dropFirst($0.count)).trimmingCharacters(in: .whitespaces.union(.punctuationCharacters)) } ?? label
                     if !content.isEmpty { lines.insert(content, at: lines.startIndex) }
                 } else {
                     addition = nil
@@ -37,6 +50,20 @@ enum LessonRenderer {
                 continue
             }
             if line.isEmpty { continue }
+
+            // « [Image 2] » seul sur sa ligne : on replace l'image des notes.
+            if line.hasPrefix("[Image "), line.hasSuffix("]"),
+               let n = Int(line.dropFirst(7).dropLast()), n >= 1, n <= images.count {
+                let picture = NSMutableAttributedString(attachment: images[n - 1])
+                picture.append(NSAttributedString(string: "\n"))
+                let style = LessonStyle.paragraph(.body)
+                style.alignment = .center
+                picture.addAttributes([.paragraphStyle: style, .font: LessonStyle.bodyFont],
+                                      range: NSRange(location: 0, length: picture.length))
+                if let addition { picture.addAttribute(.ezAddition, value: addition, range: NSRange(location: 0, length: picture.length)) }
+                out.append(picture)
+                continue
+            }
 
             var block = LessonStyle.Block.body
             var text = Substring(line)
@@ -116,12 +143,23 @@ enum LessonRenderer {
     }
 }
 
-/// Texte de l'éditeur → notes en Markdown simple, envoyées à Claude.
+/// Notes prêtes à envoyer à l'IA : Markdown simple, images à joindre, et pièces jointes à replacer dans la leçon.
+struct ExportedNotes {
+    var markdown: String
+    var images: [Data]
+    var attachments: [NSTextAttachment]
+}
+
+/// Texte de l'éditeur → notes en Markdown simple, envoyées à l'IA.
 enum NotesExporter {
-    static func markdown(from text: NSAttributedString) -> String {
+    static func markdown(from text: NSAttributedString) -> String { export(text).markdown }
+
+    static func export(_ text: NSAttributedString) -> ExportedNotes {
         let ns = text.string as NSString
         let fm = NSFontManager.shared
         var lines: [String] = []
+        var images: [Data] = []
+        var attachments: [NSTextAttachment] = []
         var open: ClaudeAddition?
         var inTranscript = false
         var location = 0
@@ -161,9 +199,24 @@ enum NotesExporter {
             }
 
             var line = ""
-            text.enumerateAttribute(.font, in: content) { value, run, _ in
+            text.enumerateAttributes(in: content) { attributes, run, _ in
+                // Image : « [Image n] », l'image part avec le message.
+                if let attachment = attributes[.attachment] as? NSTextAttachment {
+                    if let image = LessonStyle.image(of: attachment), let jpeg = AI.jpeg(image) {
+                        images.append(jpeg)
+                        attachments.append(attachment)
+                        line += "[Image \(images.count)]"
+                    }
+                    return
+                }
+                // Marque-page posé pendant le cours.
+                if let mark = attributes[.ezMark] as? String {
+                    line += mark == LessonStyle.Mark.unclear.rawValue ? "[PAS COMPRIS] " : "[IMPORTANT] "
+                    return
+                }
                 let piece = ns.substring(with: run)
-                guard block == .body, let font = value as? NSFont, !piece.trimmingCharacters(in: .whitespaces).isEmpty else {
+                guard block == .body, let font = attributes[.font] as? NSFont,
+                      !piece.trimmingCharacters(in: .whitespaces).isEmpty else {
                     line += piece; return
                 }
                 let traits = fm.traits(of: font)
@@ -175,6 +228,6 @@ enum NotesExporter {
             lines.append(prefix + line)
         }
         if open != nil || inTranscript { lines.append(":::") }
-        return lines.joined(separator: "\n")
+        return ExportedNotes(markdown: lines.joined(separator: "\n"), images: images, attachments: attachments)
     }
 }

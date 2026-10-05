@@ -19,6 +19,7 @@ struct EditorView: NSViewRepresentable {
 
         let textView = PageTextView(frame: NSRect(x: 0, y: 0, width: 900, height: 700), textContainer: container)
         textView.isRichText = true
+        textView.importsGraphics = true   // photos du tableau collées ou glissées
         textView.allowsUndo = true
         textView.drawsBackground = false
         textView.usesFindBar = true
@@ -44,7 +45,7 @@ struct EditorView: NSViewRepresentable {
         scrollView.scrollerStyle = .overlay
         scrollView.documentView = textView
 
-        controller.attach(textView: textView, storage: storage)
+        controller.attach(textView: textView, storage: storage, document: document)
         controller.undoManager = undoManager
         DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
         return scrollView

@@ -9,6 +9,21 @@ final class PageTextView: NSTextView {
 
     var placeholder = "Commence à prendre tes notes…"
 
+    /// ⌥-clic sur une phrase transcrite : réécouter le cours à cet endroit.
+    var onOptionClick: ((Int) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.option), let onOptionClick {
+            let point = convert(event.locationInWindow, from: nil)
+            let index = characterIndexForInsertion(at: point)
+            if index < (textStorage?.length ?? 0), textStorage?.attribute(.ezAudio, at: index, effectiveRange: nil) != nil {
+                onOptionClick(index)
+                return
+            }
+        }
+        super.mouseDown(with: event)
+    }
+
     // MARK: Curseur : la barre de texte seulement sur la feuille, la flèche autour.
 
     override func resetCursorRects() {
@@ -147,7 +162,33 @@ final class ClaudeLayoutManager: NSLayoutManager {
         label.draw(at: NSPoint(x: x, y: labelY - 1))
     }
 
-    private static let sparkle: NSImage? = NSImage(systemSymbolName: "sparkle", accessibilityDescription: nil)?
-        .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [.claude])))
+    /// SF Symbol teinté à l'orange de Claude, rendu en bitmap pour passer aussi à l'impression et en PDF
+    /// (le PDF ne sait pas teinter un symbole). Une version pour le mode clair, une pour le sombre.
+    private static var sparkle: NSImage? {
+        let dark = NSAppearance.currentDrawing().bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark ? sparkleDark : sparkleLight
+    }
+    private static let sparkleLight = tinted(NSColor(srgb: 0xD97757))
+    private static let sparkleDark = tinted(NSColor(srgb: 0xE8896B))
+
+    private static func tinted(_ color: NSColor) -> NSImage? {
+        guard let symbol = NSImage(systemSymbolName: "sparkle", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .bold)) else { return nil }
+        let scale: CGFloat = 4
+        let size = symbol.size
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * scale), pixelsHigh: Int(size.height * scale),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        rep.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        let rect = NSRect(origin: .zero, size: size)
+        symbol.draw(in: rect)
+        color.set()
+        rect.fill(using: .sourceAtop)
+        NSGraphicsContext.restoreGraphicsState()
+        let image = NSImage(size: size)
+        image.addRepresentation(rep)
+        return image
+    }
 }

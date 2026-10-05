@@ -44,29 +44,36 @@ struct LocalModelClient {
         return models.compactMap { $0["id"] as? String }.sorted()
     }
 
-    func lesson(from notes: String, context: LessonPrompt.Context) -> AsyncThrowingStream<ClaudeClient.Event, Error> {
+    func stream(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let model = Self.model
                     guard !model.isEmpty else { throw Failure.noModel }
                     try await Self.ensureRunning()
-                    var request = URLRequest(url: URL(string: Self.server + "/chat/completions")!)
-                    request.httpMethod = "POST"
-                    request.timeoutInterval = 900
-                    request.setValue("application/json", forHTTPHeaderField: "content-type")
-                    request.httpBody = try JSONSerialization.data(withJSONObject: [
+                    var urlRequest = URLRequest(url: URL(string: Self.server + "/chat/completions")!)
+                    urlRequest.httpMethod = "POST"
+                    urlRequest.timeoutInterval = 900
+                    urlRequest.setValue("application/json", forHTTPHeaderField: "content-type")
+                    // Images (modèles qui voient, comme Qwen-VL ou Gemma 3) au format data URI.
+                    var user: Any = request.user
+                    if !request.images.isEmpty {
+                        user = request.images.map {
+                            ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + $0.base64EncodedString()]] as [String: Any]
+                        } + [["type": "text", "text": request.user]]
+                    }
+                    urlRequest.httpBody = try JSONSerialization.data(withJSONObject: [
                         "model": model,
                         "stream": true,
                         // Pas de longue réflexion préalable (Qwen 3…) : la leçon commence tout de suite.
                         "reasoning_effort": "none",
                         "messages": [
-                            ["role": "system", "content": LessonPrompt.system],
-                            ["role": "user", "content": LessonPrompt.userMessage(notes: notes, context: context)],
+                            ["role": "system", "content": request.system],
+                            ["role": "user", "content": user],
                         ],
                     ] as [String: Any])
 
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
                     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                     guard status == 200 else {
                         var data = Data()

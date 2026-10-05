@@ -6,13 +6,48 @@ extension UTType {
     static let ezNote = UTType(exportedAs: "local.eznote.note")
 }
 
+/// Ce que le document sait de son cours, en plus du texte.
+struct DocumentInfo: Codable, Equatable {
+    /// Matière (« Droit constitutionnel »), saisie ou déduite par l'IA. Sert aussi à ranger la bibliothèque.
+    var subject = ""
+    /// Contexte du cours écrit par l'élève (« Cours de M. Durand, chapitre 3… »).
+    var context = ""
+    /// Fiches de révision, avec leur calendrier de révision espacée.
+    var cards: [Flashcard] = []
+}
+
+/// Une fiche question / réponse, révisée selon le système de Leitner (boîtes 0 à 5).
+struct Flashcard: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var question: String
+    var answer: String
+    var box = 0
+    var due = Date.now
+
+    /// Intervalle avant la prochaine révision pour chaque boîte, en jours.
+    static let intervals: [Double] = [0, 1, 3, 7, 16, 35]
+
+    var isDue: Bool { due <= .now }
+
+    mutating func review(knew: Bool) {
+        box = knew ? min(box + 1, Self.intervals.count - 1) : 0
+        due = Date.now.addingTimeInterval(Self.intervals[box] * 86_400)
+    }
+}
+
+struct NoteSnapshot {
+    var text: NSAttributedString
+    var info: DocumentInfo
+}
+
 /// Un document EZnote. Le texte vit dans un `NSTextStorage` partagé avec l'éditeur :
 /// aucune copie à chaque frappe, seulement à l'enregistrement.
 final class EZDocument: ReferenceFileDocument {
-    static var readableContentTypes: [UTType] { [.ezNote, .rtf, .plainText] }
+    static var readableContentTypes: [UTType] { [.ezNote, .flatRTFD, .rtf, .plainText] }
     static var writableContentTypes: [UTType] { [.ezNote, .rtf] }
 
     let storage: NSTextStorage
+    @Published var info = DocumentInfo()
 
     init() {
         storage = NSTextStorage(string: "", attributes: LessonStyle.attributes(.body))
@@ -20,49 +55,70 @@ final class EZDocument: ReferenceFileDocument {
 
     required init(configuration: ReadConfiguration) throws {
         guard let data = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
-        storage = NSTextStorage(attributedString: try NoteFile.read(data, type: configuration.contentType))
+        let (text, info) = try NoteFile.read(data, type: configuration.contentType)
+        storage = NSTextStorage(attributedString: text)
+        self.info = info
     }
 
-    func snapshot(contentType: UTType) throws -> NSAttributedString {
-        NSAttributedString(attributedString: storage)
+    func snapshot(contentType: UTType) throws -> NoteSnapshot {
+        NoteSnapshot(text: NSAttributedString(attributedString: storage), info: info)
     }
 
-    func fileWrapper(snapshot: NSAttributedString, configuration: WriteConfiguration) throws -> FileWrapper {
+    func fileWrapper(snapshot: NoteSnapshot, configuration: WriteConfiguration) throws -> FileWrapper {
         FileWrapper(regularFileWithContents: try NoteFile.write(snapshot, type: configuration.contentType))
     }
 }
 
-/// Format `.eznote` : le texte en RTF, plus la liste des passages ajoutés par Claude
-/// (le RTF ne sait pas les garder).
+/// Format `.eznote` : JSON avec le texte en RTFD (qui garde les images), les passages marqués
+/// (ajouts de l'IA, transcription, audio, marque-pages) que le RTF ne sait pas garder, et les infos du cours.
 enum NoteFile {
-    private struct Payload: Codable {
-        var version = 1
-        var rtf: Data
-        var additions: [Span]
+    struct Payload: Codable {
+        var version = 2
+        var rtfd: Data?
+        var rtf: Data?          // version 1
+        var additions: [Span] = []
         var transcripts: [Span]?
+        var audio: [Span]?
+        var marks: [Span]?
+        var info: DocumentInfo?
+        /// Texte brut, pour la recherche de la bibliothèque sans tout décoder.
+        var plainText: String?
     }
 
-    private struct Span: Codable {
-        var location: Int
-        var length: Int
+    struct Span: Codable {
+        var location = 0
+        var length = 0
         var kind: String
         var author: String?
     }
 
-    static func read(_ data: Data, type: UTType) throws -> NSAttributedString {
+    static func read(_ data: Data, type: UTType) throws -> (NSAttributedString, DocumentInfo) {
         let text: NSMutableAttributedString
+        var info = DocumentInfo()
         if type.conforms(to: .ezNote) {
             let payload = try JSONDecoder().decode(Payload.self, from: data)
-            text = try rtf(payload.rtf)
-            for span in payload.transcripts ?? [] where span.location >= 0 && span.location + span.length <= text.length {
-                text.addAttribute(.ezTranscript, value: true, range: NSRange(location: span.location, length: span.length))
+            if let rtfd = payload.rtfd, let decoded = NSAttributedString(rtfd: rtfd, documentAttributes: nil) {
+                text = NSMutableAttributedString(attributedString: decoded)
+            } else {
+                text = try rtf(payload.rtf ?? Data())
             }
-            for span in payload.additions where span.location >= 0 && span.location + span.length <= text.length {
-                text.addAttribute(.ezAddition, value: ClaudeAddition(kind: span.kind, author: span.author ?? "Claude"),
-                                  range: NSRange(location: span.location, length: span.length))
+            restoreListMarkers(text)
+            func apply(_ spans: [Span]?, key: NSAttributedString.Key, _ value: (Span) -> Any) {
+                for span in spans ?? [] where span.location >= 0 && span.location + span.length <= text.length {
+                    text.addAttribute(key, value: value(span), range: NSRange(location: span.location, length: span.length))
+                }
             }
+            apply(payload.transcripts, key: .ezTranscript) { _ in true }
+            apply(payload.audio, key: .ezAudio) { $0.kind }
+            apply(payload.marks, key: .ezMark) { $0.kind }
+            apply(payload.additions, key: .ezAddition) { ClaudeAddition(kind: $0.kind, author: $0.author ?? "Claude") }
+            info = payload.info ?? DocumentInfo()
+        } else if type.conforms(to: .flatRTFD), let decoded = NSAttributedString(rtfd: data, documentAttributes: nil) {
+            text = NSMutableAttributedString(attributedString: decoded)
+            restoreListMarkers(text)
         } else if type.conforms(to: .rtf) {
             text = try rtf(data)
+            restoreListMarkers(text)
         } else {
             text = NSMutableAttributedString(string: String(decoding: data, as: UTF8.self), attributes: LessonStyle.attributes(.body))
         }
@@ -71,29 +127,108 @@ enum NoteFile {
         text.enumerateAttribute(.foregroundColor, in: all) { value, range, _ in
             if value == nil { text.addAttribute(.foregroundColor, value: NSColor.textColor, range: range) }
         }
-        return text
+        return (text, info)
     }
 
-    static func write(_ snapshot: NSAttributedString, type: UTType) throws -> Data {
-        let text = NSMutableAttributedString(attributedString: snapshot)
+    static func write(_ snapshot: NoteSnapshot, type: UTType) throws -> Data {
+        let text = NSMutableAttributedString(attributedString: snapshot.text)
         let all = NSRange(location: 0, length: text.length)
         text.enumerateAttribute(.foregroundColor, in: all) { value, range, _ in
             if (value as? NSColor) == NSColor.textColor { text.removeAttribute(.foregroundColor, range: range) }
         }
-        let rtf = try text.data(from: all, documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
-        guard type.conforms(to: .ezNote) else { return rtf }
+        guard type.conforms(to: .ezNote) else {
+            return try text.data(from: all, documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+        }
 
-        var spans: [Span] = []
-        text.enumerateAttribute(.ezAddition, in: all) { value, range, _ in
-            if let addition = value as? ClaudeAddition {
-                spans.append(Span(location: range.location, length: range.length, kind: addition.kind, author: addition.author))
+        func spans(_ key: NSAttributedString.Key, _ describe: (Any) -> Span?) -> [Span] {
+            var result: [Span] = []
+            text.enumerateAttribute(key, in: all) { value, range, _ in
+                guard let value, var span = describe(value) else { return }
+                span.location = range.location
+                span.length = range.length
+                result.append(span)
             }
+            return result
         }
-        var transcripts: [Span] = []
-        text.enumerateAttribute(.ezTranscript, in: all) { value, range, _ in
-            if value != nil { transcripts.append(Span(location: range.location, length: range.length, kind: "transcription")) }
+        compressImages(text)
+        var payload = Payload(rtfd: text.rtfd(from: all, documentAttributes: [:]))
+        payload.additions = spans(.ezAddition) { ($0 as? ClaudeAddition).map { Span(kind: $0.kind, author: $0.author) } }
+        payload.transcripts = spans(.ezTranscript) { _ in Span(kind: "transcription") }
+        payload.audio = spans(.ezAudio) { ($0 as? String).map { Span(kind: $0) } }
+        payload.marks = spans(.ezMark) { ($0 as? String).map { Span(kind: $0) } }
+        payload.info = snapshot.info
+        payload.plainText = text.string
+        return try JSONEncoder().encode(payload)
+    }
+
+    /// Photos collées en TIFF ou PNG de plusieurs Mo : réenregistrées en JPEG (2400 px au plus).
+    private static func compressImages(_ text: NSMutableAttributedString) {
+        text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+            guard let attachment = value as? NSTextAttachment else { return }
+            let name = attachment.fileWrapper?.preferredFilename?.lowercased() ?? ""
+            let size = attachment.fileWrapper?.regularFileContents?.count ?? Int.max
+            guard !(name.hasSuffix(".jpg") || name.hasSuffix(".jpeg")) || size > 3_000_000,
+                  let image = LessonStyle.image(of: attachment), let jpeg = jpeg(image, maxSide: 2400) else { return }
+            let wrapper = FileWrapper(regularFileWithContents: jpeg)
+            wrapper.preferredFilename = "image.jpg"
+            let compact = NSTextAttachment(fileWrapper: wrapper)
+            compact.bounds = attachment.bounds
+            text.addAttribute(.attachment, value: compact, range: range)
         }
-        return try JSONEncoder().encode(Payload(rtf: rtf, additions: spans, transcripts: transcripts))
+    }
+
+    private static func jpeg(_ image: NSImage, maxSide: CGFloat) -> Data? {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let scale = min(1, maxSide / CGFloat(max(cg.width, cg.height)))
+        let rep = NSBitmapImageRep(cgImage: cg)
+        guard scale < 1 else { return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) }
+        let resized = NSImage(size: NSSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale))
+        resized.lockFocus()
+        NSImage(cgImage: cg, size: .zero).draw(in: NSRect(origin: .zero, size: resized.size))
+        resized.unlockFocus()
+        guard let tiff = resized.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+    }
+
+    /// Le lecteur RTF de macOS garde les listes dans le style des paragraphes mais supprime le texte des
+    /// puces (« \t•\t », « \t1.\t ») : on le remet, sinon les puces disparaissent et les passages marqués
+    /// (enregistrés par position) se décalent.
+    static func restoreListMarkers(_ text: NSMutableAttributedString) {
+        let ns = text.string as NSString
+        var paragraphs: [NSRange] = []
+        var location = 0
+        while location < ns.length {
+            let paragraph = ns.paragraphRange(for: NSRange(location: location, length: 0))
+            paragraphs.append(paragraph)
+            location = NSMaxRange(paragraph)
+        }
+        var numbers: [ObjectIdentifier: Int] = [:]
+        var previousList: NSTextList?
+        // Numérotation dans l'ordre, puis insertion de la fin vers le début (sans décaler ce qui reste à faire).
+        var inserts: [(Int, NSAttributedString)] = []
+        for paragraph in paragraphs {
+            guard let style = text.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle,
+                  let list = style.textLists.last else { previousList = nil; continue }
+            let key = ObjectIdentifier(list)
+            let number = (previousList === list || numbers[key] != nil) ? (numbers[key] ?? 0) + 1 : list.startingItemNumber
+            numbers[key] = number
+            previousList = list
+            let existing = ns.substring(with: paragraph)
+            guard LessonStyle.markerRange(in: existing) == nil else { continue }
+            var attributes = text.attributes(at: paragraph.location, effectiveRange: nil)
+            attributes.removeValue(forKey: .attachment)
+            inserts.append((paragraph.location, NSAttributedString(string: LessonStyle.marker(list, number: number), attributes: attributes)))
+        }
+        for (location, marker) in inserts.reversed() { text.insert(marker, at: location) }
+    }
+
+    /// Lecture rapide pour la bibliothèque : infos et texte brut seulement.
+    static func summary(of url: URL) -> (info: DocumentInfo, text: String)? {
+        guard let data = try? Data(contentsOf: url),
+              let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return nil }
+        var text = payload.plainText ?? ""
+        if text.isEmpty, let rtf = payload.rtf, let decoded = try? Self.rtf(rtf) { text = decoded.string }
+        return (payload.info ?? DocumentInfo(), text)
     }
 
     private static func rtf(_ data: Data) throws -> NSMutableAttributedString {

@@ -5,6 +5,10 @@ extension NSAttributedString.Key {
     static let ezAddition = NSAttributedString.Key("EZClaudeAddition")
     /// Texte transcrit depuis l'audio du cours. Valeur : `true`.
     static let ezTranscript = NSAttributedString.Key("EZTranscript")
+    /// Passage transcrit dont on garde l'audio. Valeur : « idAudio@secondes ».
+    static let ezAudio = NSAttributedString.Key("EZAudio")
+    /// Marque-page « Important » / « Pas compris ». Valeur : `LessonStyle.Mark.rawValue`.
+    static let ezMark = NSAttributedString.Key("EZMark")
 }
 
 /// Un ajout de Claude. Chaque bloc a sa propre instance : deux blocs voisins restent distincts.
@@ -157,6 +161,48 @@ enum LessonStyle {
             style.paragraphSpacingBefore = before
             style.paragraphSpacing = after
             storage.addAttribute(.paragraphStyle, value: style, range: paragraph)
+        }
+    }
+
+    // MARK: Marque-pages
+
+    enum Mark: String {
+        case important, unclear
+
+        var label: String { self == .important ? "★ Important" : "? Pas compris" }
+
+        /// Petite étiquette orange insérée dans le texte.
+        func attributed(base: [NSAttributedString.Key: Any]) -> NSAttributedString {
+            var attributes = base
+            attributes[.font] = NSFont.systemFont(ofSize: 12.5, weight: .bold)
+            attributes[.foregroundColor] = NSColor.claude
+            attributes[.backgroundColor] = NSColor.claude.withAlphaComponent(0.14)
+            attributes[.ezMark] = rawValue
+            attributes.removeValue(forKey: .ezAudio)
+            let chip = NSMutableAttributedString(string: "\u{2009}\(label)\u{2009}", attributes: attributes)
+            chip.append(NSAttributedString(string: " ", attributes: base))
+            return chip
+        }
+    }
+
+    // MARK: Images
+
+    static func image(of attachment: NSTextAttachment) -> NSImage? {
+        if let image = attachment.image { return image }
+        if let data = attachment.fileWrapper?.regularFileContents ?? attachment.contents { return NSImage(data: data) }
+        return nil
+    }
+
+    /// Les photos collées ou glissées gardent leurs proportions mais ne dépassent pas la largeur de la colonne.
+    static func fitAttachments(_ storage: NSTextStorage, in range: NSRange, width: CGFloat = PageTextView.column) {
+        let range = NSIntersectionRange(range, NSRange(location: 0, length: storage.length))
+        guard range.length > 0 else { return }
+        storage.enumerateAttribute(.attachment, in: range) { value, _, _ in
+            guard let attachment = value as? NSTextAttachment, attachment.bounds.isEmpty || attachment.bounds.width > width,
+                  let image = image(of: attachment), image.size.width > 0 else { return }
+            let scale = min(1, width / image.size.width, 520 / image.size.height)
+            attachment.bounds = CGRect(x: 0, y: 0, width: (image.size.width * scale).rounded(),
+                                       height: (image.size.height * scale).rounded())
         }
     }
 }

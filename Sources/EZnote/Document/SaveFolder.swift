@@ -17,6 +17,21 @@ enum SaveFolder {
         UserDefaults.standard.set((url.path as NSString).abbreviatingWithTildeInPath, forKey: "NSNavLastRootDirectory")
     }
 
+    /// iCloud Drive › EZnote : les cours y sont synchronisés sur tous les appareils de l'élève.
+    static var iCloudFolder: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs/EZnote", isDirectory: true)
+    }
+
+    static var iCloudAvailable: Bool {
+        FileManager.default.fileExists(atPath: iCloudFolder.deletingLastPathComponent().path)
+    }
+
+    static func useICloud() {
+        UserDefaults.standard.set(iCloudFolder.path, forKey: defaultsKey)
+        apply()
+    }
+
     @MainActor
     static func choose() -> URL? {
         let panel = NSOpenPanel()

@@ -5,37 +5,51 @@ struct ContentView: View {
     @ObservedObject var document: EZDocument
     var fileURL: URL?
     @StateObject private var editor = EditorController()
+    @State private var showsContext = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
             MeshBackground(mood: editor.isWorking ? .claude : .calm)
             EditorView(document: document, controller: editor)
                 .uyEdgeFade(28)
-            if editor.isWorking {
-                StatusPill(phase: editor.phase, author: editor.author)
-                    .padding(.bottom, UY.space24)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            } else if editor.isRecording {
-                RecordingPill(recording: editor.recording) { editor.toggleRecording() }
-                    .padding(.bottom, UY.space24)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            Group {
+                if editor.isWorking {
+                    StatusPill(phase: editor.phase, author: editor.author)
+                } else if editor.isRecording {
+                    RecordingPill(recording: editor.recording,
+                                  mark: { editor.insertMark($0) },
+                                  stop: { editor.toggleRecording() })
+                } else if editor.isPlaying {
+                    PlayingPill { editor.stopAudio() }
+                }
             }
+            .padding(.bottom, UY.space24)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
         .animation(UY.ease(0.35), value: editor.isWorking)
         .animation(UY.ease(0.35), value: editor.isRecording)
+        .animation(UY.ease(0.35), value: editor.isPlaying)
         .onAppear {
             SaveFolder.apply()
             AppAppearance.apply()
             editor.documentTitle = fileURL?.deletingPathExtension().lastPathComponent
         }
         .onChange(of: fileURL) { _, url in editor.documentTitle = url?.deletingPathExtension().lastPathComponent }
+        .onChange(of: document.info) { _, _ in editor.markDirty() }
         .focusedSceneObject(editor)
-        .frame(minWidth: 640, minHeight: 480)
+        .frame(minWidth: 680, minHeight: 480)
         .toolbar { toolbar }
         .sheet(isPresented: $editor.needsAPIKey) {
             APIKeySheet { editor.ezify() }
         }
-        .alert("EZifier", isPresented: Binding(get: { editor.errorMessage != nil }, set: { if !$0 { editor.errorMessage = nil } })) {
+        .sheet(item: $editor.tool) { tool in
+            switch tool {
+            case .revision: RevisionView(document: document, editor: editor)
+            case .summary: SummaryView(editor: editor)
+            case .question: QuestionView(editor: editor)
+            }
+        }
+        .alert("EZnote", isPresented: Binding(get: { editor.errorMessage != nil }, set: { if !$0 { editor.errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(editor.errorMessage ?? "")
@@ -44,6 +58,18 @@ struct ContentView: View {
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button { showsContext.toggle() } label: {
+                UYSymbol(name: document.info.context.isEmpty && document.info.subject.isEmpty ? "text.book.closed" : "text.book.closed.fill",
+                         size: 14)
+            }
+            .help("Contexte du cours : matière, professeur, chapitre… (utilisé par l'IA et la dictée)")
+            .accessibilityLabel("Contexte du cours")
+            .popover(isPresented: $showsContext, arrowEdge: .bottom) {
+                ContextPopover(document: document)
+            }
+        }
+
         ToolbarItemGroup(placement: .principal) {
             Menu {
                 ForEach(LessonStyle.Block.allCases, id: \.self) { block in
@@ -67,6 +93,16 @@ struct ContentView: View {
             toolButton("Liste numérotée", icon: "list.number", active: editor.formats.contains(.numbers)) {
                 editor.toggleList(LessonStyle.numbered)
             }
+            Menu {
+                Button("Image…", systemImage: "photo") { editor.insertImage() }
+                Button("Marquer comme important", systemImage: "star") { editor.insertMark(.important) }
+                Button("Marquer « pas compris »", systemImage: "questionmark.circle") { editor.insertMark(.unclear) }
+            } label: {
+                UYSymbol(name: "plus", size: 14)
+            }
+            .fixedSize()
+            .help("Insérer une image ou un marque-page")
+            .disabled(editor.isWorking)
         }
 
         ToolbarItem(placement: .primaryAction) {
@@ -80,6 +116,19 @@ struct ContentView: View {
         }
 
         ToolbarItem(placement: .primaryAction) {
+            Menu {
+                Button("Fiches et quiz…", systemImage: "rectangle.on.rectangle.angled") { editor.openTool(.revision) }
+                Button("Fiche de synthèse…", systemImage: "doc.text.magnifyingglass") { editor.openTool(.summary) }
+                Button("Poser une question sur la sélection…", systemImage: "questionmark.bubble") { editor.askAboutSelection() }
+            } label: {
+                UYSymbol(name: "graduationcap", size: 14)
+            }
+            .fixedSize()
+            .help("Réviser : fiches, quiz, synthèse, questions")
+            .disabled(editor.isWorking || editor.isRecording)
+        }
+
+        ToolbarItem(placement: .primaryAction) {
             Button { editor.ezify() } label: {
                 HStack(spacing: 6) {
                     UYSymbol(name: editor.isWorking ? "stop.fill" : "sparkles", size: 14, verticalOnly: true)
@@ -90,7 +139,7 @@ struct ContentView: View {
             }
             .buttonStyle(.glassProminent)
             .tint(UY.claude)
-            .help("Claude transforme tes notes en leçon complète (⇧⌘E)")
+            .help("L'IA transforme tes notes en leçon complète (⇧⌘E)")
         }
     }
 
@@ -110,9 +159,56 @@ struct ContentView: View {
     }
 }
 
-/// Capsule en bas de la fenêtre pendant l'enregistrement du cours, avec la durée et un bouton Arrêter.
+/// Contexte du cours, propre au document : utilisé par EZifier, les outils de révision et la dictée.
+private struct ContextPopover: View {
+    @ObservedObject var document: EZDocument
+
+    var body: some View {
+        VStack(spacing: UY.space14) {
+            Text("Contexte du cours").font(UY.headline)
+            Text("L'IA s'en sert pour comprendre tes notes et deviner les mots mal transcrits ; la dictée, pour reconnaître le vocabulaire. Elle peut aussi chercher ce contexte sur le web.")
+                .font(UY.footnote)
+                .foregroundStyle(UY.inkSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            GlassField(placeholder: "Matière (ex. Droit constitutionnel)", text: $document.info.subject)
+            ContextEditor(text: $document.info.context,
+                          placeholder: "Professeur, chapitre, livre, sujet du cours, mots techniques…")
+                .frame(height: 130)
+        }
+        .padding(UY.space22)
+        .frame(width: 380)
+    }
+}
+
+/// Zone de texte arrondie avec indication, pour écrire du contexte.
+struct ContextEditor: View {
+    @Binding var text: String
+    var placeholder: String
+
+    var body: some View {
+        TextEditor(text: $text)
+            .font(UY.subheadline)
+            .scrollContentBackground(.hidden)
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: UY.radiusField, style: .continuous).fill(UY.track))
+            .overlay(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(placeholder)
+                        .font(UY.subheadline)
+                        .foregroundStyle(UY.inkSecondary)
+                        .padding(.horizontal, 15)
+                        .padding(.vertical, 10)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+}
+
+/// Capsule en bas de la fenêtre pendant l'enregistrement du cours : durée, marque-pages, Arrêter.
 private struct RecordingPill: View {
     let recording: EditorController.Recording
+    var mark: (LessonStyle.Mark) -> Void
     var stop: () -> Void
     @State private var pulse = false
 
@@ -129,14 +225,20 @@ private struct RecordingPill: View {
                     Text("Enregistrement · \(Self.duration(context.date.timeIntervalSince(since)))")
                         .monospacedDigit()
                 }
+                Button { mark(.important) } label: { Label("Important", systemImage: "star.fill") }
+                    .buttonStyle(.glass)
+                    .help("Le prof insiste : marquer ce moment (⌃⌘I)")
+                Button { mark(.unclear) } label: { Label("Pas compris", systemImage: "questionmark") }
+                    .buttonStyle(.glass)
+                    .help("Je n'ai pas compris : l'IA l'expliquera (⌃⌘U)")
             } else {
                 Text("Préparation du micro…")
             }
             Button("Arrêter", action: stop)
                 .buttonStyle(.glassProminent)
                 .tint(UY.danger)
-                .controlSize(.small)
         }
+        .controlSize(.small)
         .font(.system(size: 13, weight: .semibold))
         .foregroundStyle(UY.ink)
         .padding(.leading, 18)
@@ -151,7 +253,27 @@ private struct RecordingPill: View {
     }
 }
 
-/// Capsule en bas de la fenêtre pendant que Claude travaille.
+/// Capsule pendant la réécoute d'un passage du cours.
+private struct PlayingPill: View {
+    var stop: () -> Void
+
+    var body: some View {
+        HStack(spacing: UY.space12) {
+            Image(systemName: "waveform").symbolEffect(.variableColor.iterative)
+            Text("Réécoute du cours")
+            Button("Arrêter", action: stop).buttonStyle(.glassProminent).tint(UY.claude)
+        }
+        .controlSize(.small)
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(UY.ink)
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
+        .padding(.vertical, 7)
+        .uyGlass(radius: UY.radiusCapsule)
+    }
+}
+
+/// Capsule en bas de la fenêtre pendant que l'IA travaille.
 private struct StatusPill: View {
     let phase: EditorController.Phase
     let author: String

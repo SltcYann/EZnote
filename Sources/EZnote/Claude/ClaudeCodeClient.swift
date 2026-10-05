@@ -27,7 +27,7 @@ struct ClaudeCodeClient {
 
     static var isAvailable: Bool { executable != nil }
 
-    func lesson(from notes: String, context: LessonPrompt.Context, webSearch: Bool) -> AsyncThrowingStream<ClaudeClient.Event, Error> {
+    func stream(_ request: AIRequest) -> AsyncThrowingStream<AIEvent, Error> {
         AsyncThrowingStream { continuation in
             guard let executable = Self.executable else {
                 continuation.finish(throwing: Failure.notInstalled)
@@ -35,11 +35,11 @@ struct ClaudeCodeClient {
             }
             let process = Process()
             process.executableURL = executable
-            let tools = webSearch ? "WebSearch" : ""
+            let tools = request.webSearch ? "WebSearch,WebFetch" : ""
             process.arguments = [
-                "-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
+                "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages", "--verbose",
                 "--model", "opus", "--effort", "medium",
-                "--system-prompt", LessonPrompt.system,
+                "--system-prompt", request.system,
                 "--tools", tools, "--allowedTools", tools,
                 "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands",
             ]
@@ -58,7 +58,13 @@ struct ClaudeCodeClient {
             let task = Task {
                 do {
                     try process.run()
-                    input.fileHandleForWriting.write(Data(LessonPrompt.userMessage(notes: notes, context: context).utf8))
+                    // Message au format JSON : il peut porter des images (photos du tableau).
+                    var content: [[String: Any]] = request.images.map {
+                        ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": $0.base64EncodedString()]]
+                    }
+                    content.append(["type": "text", "text": request.user])
+                    let message: [String: Any] = ["type": "user", "message": ["role": "user", "content": content]]
+                    input.fileHandleForWriting.write(try JSONSerialization.data(withJSONObject: message) + Data("\n".utf8))
                     try input.fileHandleForWriting.close()
 
                     var failure: String?
