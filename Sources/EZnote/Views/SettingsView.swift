@@ -1,7 +1,72 @@
 import SwiftUI
 
-/// Réglages (⌘,) : abonnement Claude ou clé API, et recherche web.
+/// Réglages (⌘,) : connexion à Claude, études de l'élève, dossier des documents.
 struct SettingsView: View {
+    var body: some View {
+        TabView {
+            ClaudeSettings()
+                .tabItem { Label("Claude", systemImage: "sparkles") }
+            StudiesSettings()
+                .tabItem { Label("Mes études", systemImage: "graduationcap") }
+            DocumentsSettings()
+                .tabItem { Label("Documents", systemImage: "folder") }
+        }
+        .frame(width: 460)
+    }
+}
+
+/// Le niveau et les études aident Claude à comprendre les notes et à deviner les mots mal transcrits.
+private struct StudiesSettings: View {
+    @AppStorage("studyLevel") private var level = ""
+    @AppStorage("studyField") private var field = ""
+
+    var body: some View {
+        VStack(spacing: UY.space18) {
+            UYSymbol(name: "graduationcap.fill", size: 26).foregroundStyle(UY.claude)
+            Text("Claude s'en sert pour comprendre tes notes et deviner ce que le professeur a voulu dire quand la transcription est floue. La matière, il la déduit de tes notes et du nom du document.")
+                .font(UY.footnote)
+                .foregroundStyle(UY.inkSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            GlassField(placeholder: "Niveau (ex. Terminale, L2, Master 1)", text: $level)
+            GlassField(placeholder: "Études (ex. Droit, Médecine, Prépa MPSI)", text: $field)
+        }
+        .padding(UY.space32)
+    }
+}
+
+private struct DocumentsSettings: View {
+    @AppStorage(SaveFolder.defaultsKey) private var folder = ""
+
+    var body: some View {
+        VStack(spacing: UY.space18) {
+            UYSymbol(name: "folder.fill", size: 26).foregroundStyle(UY.claude)
+            Text("Dossier de sauvegarde par défaut")
+                .font(UY.headline)
+            Text(folder.isEmpty ? "Aucun : macOS propose le dernier dossier utilisé." : (folder as NSString).abbreviatingWithTildeInPath)
+                .font(UY.footnote)
+                .foregroundStyle(UY.inkSecondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            HStack(spacing: UY.space12) {
+                Button("Choisir…") { _ = SaveFolder.choose() }
+                    .buttonStyle(.glassProminent)
+                    .tint(UY.claude)
+                if !folder.isEmpty {
+                    Button("Afficher") { NSWorkspace.shared.open(URL(fileURLWithPath: folder)) }
+                        .buttonStyle(.glass)
+                    Button("Retirer") { folder = "" }
+                        .buttonStyle(.glass)
+                }
+            }
+            .controlSize(.large)
+        }
+        .padding(UY.space32)
+    }
+}
+
+private struct ClaudeSettings: View {
     @State private var key = Keychain.apiKey ?? ""
     @State private var saved = false
     @AppStorage("webSearch") private var webSearch = true
@@ -9,12 +74,6 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: UY.space22) {
-            VStack(spacing: UY.space8) {
-                UYSymbol(name: "sparkles", size: 28)
-                    .foregroundStyle(UY.claude)
-                Text("EZifier").font(UY.title3)
-            }
-
             Picker("", selection: $connection) {
                 Text("Abonnement Claude").tag(ClaudeConnection.subscription.rawValue)
                 Text("Clé API").tag(ClaudeConnection.apiKey.rawValue)
@@ -34,7 +93,6 @@ struct SettingsView: View {
                 .font(UY.subheadline)
         }
         .padding(UY.space32)
-        .frame(width: 440)
         .animation(UY.ease(0.25), value: connection)
         .onChange(of: key) { _, _ in saved = false }
     }
@@ -49,6 +107,7 @@ struct SettingsView: View {
                 .font(UY.footnote)
                 .foregroundStyle(UY.inkSecondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

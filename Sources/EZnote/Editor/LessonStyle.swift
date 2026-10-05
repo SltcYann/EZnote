@@ -3,6 +3,8 @@ import AppKit
 extension NSAttributedString.Key {
     /// Texte ajouté par Claude (précision, exemple…). Valeur : `ClaudeAddition`.
     static let ezAddition = NSAttributedString.Key("EZClaudeAddition")
+    /// Texte transcrit depuis l'audio du cours. Valeur : `true`.
+    static let ezTranscript = NSAttributedString.Key("EZTranscript")
 }
 
 /// Un ajout de Claude. Chaque bloc a sa propre instance : deux blocs voisins restent distincts.

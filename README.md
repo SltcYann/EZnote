@@ -15,6 +15,12 @@ Interface en verre (Liquid Glass natif, design system **UY**) sur un fond animé
 - ⌘Z remet tes notes d'origine, ⇧⌘Z remet la leçon. **Arrêter** annule et remet les notes.
 - Retour sur une ligne vide à la fin d'un ajout de Claude : on sort du contour.
 
+## Enregistrer un cours
+
+Le bouton micro de la barre d'outils écoute le cours et écrit ce que dit le professeur à la fin du document, sous un titre « Cours enregistré · date ». La transcription se fait sur le Mac, sans limite de durée ; tu peux continuer à taper pendant ce temps. Les mots encore incertains s'affichent en gris.
+
+Ensuite, **EZifier** en fait une leçon : Claude enlève les hésitations et, quand un passage est mal transcrit, devine ce que le professeur voulait dire grâce au contexte (matière déduite des notes et du nom du document, ton niveau et tes études). S'il n'est pas sûr, il le signale dans un encadré « Attention ».
+
 ## Éditeur
 
 - Moteur de texte natif d'Apple (TextKit, comme TextEdit et Pages) : fluide même sur de longs documents.
@@ -31,9 +37,11 @@ Interface en verre (Liquid Glass natif, design system **UY**) sur un fond animé
 
 Le script compile, crée `build/EZnote.app`, la signe et l'installe dans `/Applications/EZnote.app`.
 
-## Clé API
+## Réglages (⌘,)
 
-Au premier EZifier, EZnote demande une clé API Anthropic ([en créer une](https://platform.claude.com/settings/keys)). Elle est rangée dans le trousseau macOS et modifiable dans Réglages (⌘,), où l'on peut aussi couper la recherche web.
+- **Claude** : *Abonnement Claude* (par défaut) passe par Claude Code, installé et connecté à ton compte claude.ai : pas de clé API, l'EZification compte dans les limites de ton abonnement. *Clé API* utilise une clé Anthropic ([en créer une](https://platform.claude.com/settings/keys)), rangée dans le trousseau. On peut aussi couper la recherche web.
+- **Mes études** : ton niveau et tes études, pour aider Claude à comprendre tes notes.
+- **Documents** : le dossier de sauvegarde proposé par défaut.
 
 > Sans certificat de signature local, l'app est signée en ad hoc : macOS peut redemander l'accès au trousseau après une recompilation. Pour l'éviter, crée un certificat « EZnote » (Trousseaux d'accès › Assistant de certification › Créer un certificat, type « Signature de code »).
 
@@ -42,7 +50,7 @@ Modèle utilisé : Claude Opus 5.5 (`claude-opus-5-5`), en streaming, avec la re
 ## Prérequis
 
 - macOS 26 ou plus récent (Liquid Glass).
-- Une clé API Anthropic (l'EZification est facturée sur ton compte API).
+- Un abonnement Claude avec Claude Code installé et connecté, ou une clé API Anthropic.
 
 ## Structure
 
@@ -57,9 +65,11 @@ Sources/EZnote/
 │   └── LessonStyle.swift      typographie, listes, espacement automatique
 ├── Claude/
 │   ├── ClaudeClient.swift     API Messages en streaming (SSE), recherche web
+│   ├── ClaudeCodeClient.swift abonnement Claude via Claude Code
 │   ├── LessonPrompt.swift     consignes d'EZifier
 │   ├── LessonRenderer.swift   Markdown de Claude → texte mis en forme (et l'inverse)
 │   └── Keychain.swift
+├── Audio/LectureRecorder.swift micro → transcription en direct (SpeechAnalyzer)
 ├── UY/                        tokens et composants du design system UY
 └── Views/                     fenêtre, barre d'outils, réglages
 ```

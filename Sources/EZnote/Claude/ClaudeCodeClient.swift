@@ -27,7 +27,7 @@ struct ClaudeCodeClient {
 
     static var isAvailable: Bool { executable != nil }
 
-    func lesson(from notes: String, webSearch: Bool) -> AsyncThrowingStream<ClaudeClient.Event, Error> {
+    func lesson(from notes: String, context: LessonPrompt.Context, webSearch: Bool) -> AsyncThrowingStream<ClaudeClient.Event, Error> {
         AsyncThrowingStream { continuation in
             guard let executable = Self.executable else {
                 continuation.finish(throwing: Failure.notInstalled)
@@ -58,7 +58,7 @@ struct ClaudeCodeClient {
             let task = Task {
                 do {
                     try process.run()
-                    input.fileHandleForWriting.write(Data(LessonPrompt.userMessage(notes: notes).utf8))
+                    input.fileHandleForWriting.write(Data(LessonPrompt.userMessage(notes: notes, context: context).utf8))
                     try input.fileHandleForWriting.close()
 
                     var failure: String?

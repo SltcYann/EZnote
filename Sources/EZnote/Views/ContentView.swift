@@ -3,6 +3,7 @@ import SwiftUI
 /// Fenêtre d'un document : fond UY animé, feuille de papier, barre d'outils et bouton EZifier.
 struct ContentView: View {
     @ObservedObject var document: EZDocument
+    var fileURL: URL?
     @StateObject private var editor = EditorController()
 
     var body: some View {
@@ -13,9 +14,19 @@ struct ContentView: View {
                 StatusPill(phase: editor.phase)
                     .padding(.bottom, UY.space24)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if editor.isRecording {
+                RecordingPill(recording: editor.recording) { editor.toggleRecording() }
+                    .padding(.bottom, UY.space24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(UY.ease(0.35), value: editor.isWorking)
+        .animation(UY.ease(0.35), value: editor.isRecording)
+        .onAppear {
+            SaveFolder.apply()
+            editor.documentTitle = fileURL?.deletingPathExtension().lastPathComponent
+        }
+        .onChange(of: fileURL) { _, url in editor.documentTitle = url?.deletingPathExtension().lastPathComponent }
         .focusedSceneObject(editor)
         .frame(minWidth: 640, minHeight: 480)
         .toolbar { toolbar }
@@ -53,6 +64,16 @@ struct ContentView: View {
         }
 
         ToolbarItem(placement: .primaryAction) {
+            Button { editor.toggleRecording() } label: {
+                UYSymbol(name: editor.isRecording ? "stop.fill" : "mic.fill", size: 14)
+                    .foregroundStyle(editor.isRecording ? UY.danger : UY.ink)
+            }
+            .help(editor.isRecording ? "Arrêter l'enregistrement du cours" : "Enregistrer le cours : ce que dit le prof s'écrit dans le document")
+            .accessibilityLabel(editor.isRecording ? "Arrêter l'enregistrement" : "Enregistrer le cours")
+            .disabled(editor.isWorking || editor.recording == .preparing)
+        }
+
+        ToolbarItem(placement: .primaryAction) {
             Button { editor.ezify() } label: {
                 HStack(spacing: 6) {
                     UYSymbol(name: editor.isWorking ? "stop.fill" : "sparkles", size: 14, verticalOnly: true)
@@ -72,6 +93,47 @@ struct ContentView: View {
             .help(title)
             .accessibilityLabel(title)
             .disabled(editor.isWorking)
+    }
+}
+
+/// Capsule en bas de la fenêtre pendant l'enregistrement du cours, avec la durée et un bouton Arrêter.
+private struct RecordingPill: View {
+    let recording: EditorController.Recording
+    var stop: () -> Void
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(spacing: UY.space12) {
+            Circle()
+                .fill(UY.danger)
+                .frame(width: 10, height: 10)
+                .opacity(pulse ? 0.35 : 1)
+                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
+                .onAppear { pulse = true }
+            if case .on(let since) = recording {
+                TimelineView(.periodic(from: since, by: 1)) { context in
+                    Text("Enregistrement · \(Self.duration(context.date.timeIntervalSince(since)))")
+                        .monospacedDigit()
+                }
+            } else {
+                Text("Préparation du micro…")
+            }
+            Button("Arrêter", action: stop)
+                .buttonStyle(.glassProminent)
+                .tint(UY.danger)
+                .controlSize(.small)
+        }
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(UY.ink)
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
+        .padding(.vertical, 7)
+        .uyGlass(radius: UY.radiusCapsule)
+    }
+
+    private static func duration(_ seconds: TimeInterval) -> String {
+        let s = Int(seconds)
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
     }
 }
 

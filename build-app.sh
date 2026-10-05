@@ -31,6 +31,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>EZnote écoute le cours pour écrire ce que dit le professeur dans ton document.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>EZnote transcrit le cours sur ton Mac pour que Claude puisse ensuite l'EZifier.</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

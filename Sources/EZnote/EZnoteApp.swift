@@ -6,11 +6,12 @@ struct EZnoteApp: App {
         #if DEBUG
         Snapshot.runIfRequested()
         #endif
+        SaveFolder.apply()
     }
 
     var body: some Scene {
         DocumentGroup(newDocument: { EZDocument() }) { file in
-            ContentView(document: file.document)
+            ContentView(document: file.document, fileURL: file.fileURL)
         }
         .commands {
             TextFormattingCommands()

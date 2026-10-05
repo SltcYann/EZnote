@@ -39,6 +39,7 @@ enum NoteFile {
         var version = 1
         var rtf: Data
         var additions: [Span]
+        var transcripts: [Span]?
     }
 
     private struct Span: Codable {
@@ -52,6 +53,9 @@ enum NoteFile {
         if type.conforms(to: .ezNote) {
             let payload = try JSONDecoder().decode(Payload.self, from: data)
             text = try rtf(payload.rtf)
+            for span in payload.transcripts ?? [] where span.location >= 0 && span.location + span.length <= text.length {
+                text.addAttribute(.ezTranscript, value: true, range: NSRange(location: span.location, length: span.length))
+            }
             for span in payload.additions where span.location >= 0 && span.location + span.length <= text.length {
                 text.addAttribute(.ezAddition, value: ClaudeAddition(kind: span.kind),
                                   range: NSRange(location: span.location, length: span.length))
@@ -84,7 +88,11 @@ enum NoteFile {
                 spans.append(Span(location: range.location, length: range.length, kind: addition.kind))
             }
         }
-        return try JSONEncoder().encode(Payload(rtf: rtf, additions: spans))
+        var transcripts: [Span] = []
+        text.enumerateAttribute(.ezTranscript, in: all) { value, range, _ in
+            if value != nil { transcripts.append(Span(location: range.location, length: range.length, kind: "transcription")) }
+        }
+        return try JSONEncoder().encode(Payload(rtf: rtf, additions: spans, transcripts: transcripts))
     }
 
     private static func rtf(_ data: Data) throws -> NSMutableAttributedString {

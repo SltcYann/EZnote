@@ -111,16 +111,20 @@ enum NotesExporter {
         let fm = NSFontManager.shared
         var lines: [String] = []
         var open: ClaudeAddition?
+        var inTranscript = false
         var location = 0
 
         while location < ns.length {
             let paragraph = ns.paragraphRange(for: NSRange(location: location, length: 0))
             location = NSMaxRange(paragraph)
             let addition = text.attribute(.ezAddition, at: paragraph.location, effectiveRange: nil) as? ClaudeAddition
-            if addition !== open {
-                if open != nil { lines.append(":::") }
+            let transcript = text.attribute(.ezTranscript, at: paragraph.location, effectiveRange: nil) != nil
+            if addition !== open || transcript != inTranscript {
+                if open != nil || inTranscript { lines.append(":::") }
                 if let addition { lines.append(":::claude \(addition.kind)") }
+                else if transcript { lines.append(":::transcription") }
                 open = addition
+                inTranscript = addition == nil && transcript
             }
 
             var content = NSRange(location: paragraph.location, length: paragraph.length)
@@ -158,7 +162,7 @@ enum NotesExporter {
             }
             lines.append(prefix + line)
         }
-        if open != nil { lines.append(":::") }
+        if open != nil || inTranscript { lines.append(":::") }
         return lines.joined(separator: "\n")
     }
 }

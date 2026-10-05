@@ -5,8 +5,10 @@ import SwiftUI
 @MainActor
 final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NSTextStorageDelegate {
     enum Phase: Equatable { case idle, reading, searching, writing }
+    enum Recording: Equatable { case off, preparing, on(since: Date) }
 
     @Published private(set) var phase: Phase = .idle
+    @Published private(set) var recording: Recording = .off
     @Published var errorMessage: String?
     @Published var needsAPIKey = false
 
@@ -16,6 +18,15 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
     private var task: Task<Void, Never>?
 
     var isWorking: Bool { phase != .idle }
+    var isRecording: Bool { recording != .off }
+    /// Nom du fichier : indice sur la matière pour Claude.
+    var documentTitle: String?
+
+    private let recorder = LectureRecorder()
+    /// Fin du texte transcrit définitif ; le texte provisoire (en gris) suit sur `volatileLength` caractères.
+    private var transcriptEnd = 0
+    private var volatileLength = 0
+    private var writingTranscript = false
 
     func attach(textView: PageTextView, storage: NSTextStorage) {
         self.textView = textView
@@ -34,6 +45,15 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
     nonisolated func textStorage(_ textStorage: NSTextStorage, willProcessEditing editedMask: NSTextStorageEditActions,
                                  range editedRange: NSRange, changeInLength delta: Int) {
         LessonStyle.normalizeSpacing(textStorage, around: editedRange)
+        guard editedMask.contains(.editedCharacters) else { return }
+        MainActor.assumeIsolated { userEdited(editedRange, delta: delta) }
+    }
+
+    /// Pendant l'enregistrement, ce que tu tapes avant la transcription la décale.
+    private func userEdited(_ range: NSRange, delta: Int) {
+        guard case .on = recording, !writingTranscript, let storage else { return }
+        if range.location < transcriptEnd { transcriptEnd = max(range.location, transcriptEnd + delta) }
+        transcriptEnd = min(transcriptEnd, storage.length - volatileLength)
     }
 
     /// Retour sur un paragraphe vide au bout d'un ajout de Claude : on sort du contour (comme pour une liste).
@@ -175,11 +195,13 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
 
     func ezify() {
         if isWorking { task?.cancel(); return }
+        guard !isRecording else { errorMessage = "Arrête d'abord l'enregistrement du cours."; return }
         let connection = ClaudeConnection.current
         let apiKey = Keychain.apiKey ?? ""
         if connection == .apiKey && apiKey.isEmpty { needsAPIKey = true; return }
         guard let textView, let storage else { return }
         let notes = NotesExporter.markdown(from: storage)
+        let context = LessonPrompt.Context(title: documentTitle)
         guard !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             errorMessage = "Écris d'abord quelques notes, puis appuie sur EZifier."
             return
@@ -196,8 +218,8 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
             var lastRender = ContinuousClock.now
             do {
                 let events = connection == .subscription
-                    ? ClaudeCodeClient().lesson(from: notes, webSearch: webSearch)
-                    : ClaudeClient(apiKey: apiKey).lesson(from: notes, webSearch: webSearch)
+                    ? ClaudeCodeClient().lesson(from: notes, context: context, webSearch: webSearch)
+                    : ClaudeClient(apiKey: apiKey).lesson(from: notes, context: context, webSearch: webSearch)
                 for try await event in events {
                     guard let self else { return }
                     switch event {
@@ -255,6 +277,132 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
         textView?.isEditable = true
         textView?.typingAttributes = LessonStyle.attributes(.body)
         if let textView { textView.window?.makeFirstResponder(textView) }
+    }
+
+    // MARK: Enregistrement du cours
+
+    func toggleRecording() {
+        switch recording {
+        case .on: Task { await stopRecording() }
+        case .preparing: return
+        case .off:
+            guard !isWorking, let storage, let textView else { return }
+            recording = .preparing
+            Task {
+                do {
+                    recorder.onVolatile = { [weak self] in self?.showVolatile($0) }
+                    recorder.onFinal = { [weak self] in self?.appendFinal($0) }
+                    try await recorder.start()
+                    let original = NSAttributedString(attributedString: storage)
+                    textView.breakUndoCoalescing()
+                    textView.allowsUndo = false
+                    beginTranscript()
+                    registerTranscriptUndo(original: original)
+                    recording = .on(since: .now)
+                } catch {
+                    recording = .off
+                    errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func stopRecording() async {
+        guard case .on = recording else { return }
+        await recorder.stop()
+        writeTranscript { storage, _ in
+            storage.deleteCharacters(in: NSRange(location: transcriptEnd, length: volatileLength))
+            volatileLength = 0
+        }
+        recording = .off
+        textView?.allowsUndo = true
+    }
+
+    /// Arrêt immédiat, sans attendre les derniers mots (annulation pendant l'enregistrement).
+    private func abandonRecording() {
+        guard recording != .off else { return }
+        recorder.onVolatile = nil
+        recorder.onFinal = nil
+        Task { await recorder.stop() }
+        volatileLength = 0
+        recording = .off
+        textView?.allowsUndo = true
+    }
+
+    /// Titre « Cours enregistré · date » à la fin du document ; la transcription s'écrit dessous.
+    private func beginTranscript() {
+        writeTranscript { storage, _ in
+            let heading = NSMutableAttributedString()
+            if storage.length > 0 && !storage.string.hasSuffix("\n") {
+                heading.append(NSAttributedString(string: "\n", attributes: LessonStyle.attributes(.body)))
+            }
+            let date = Date.now.formatted(date: .abbreviated, time: .shortened)
+            heading.append(NSAttributedString(string: "Cours enregistré · \(date)\n", attributes: LessonStyle.attributes(.subheading)))
+            storage.append(heading)
+            transcriptEnd = storage.length
+            volatileLength = 0
+        }
+    }
+
+    private func showVolatile(_ text: String) {
+        writeTranscript { storage, attributes in
+            var volatile = attributes
+            volatile[.foregroundColor] = NSColor.secondaryLabelColor
+            let piece = NSAttributedString(string: spaced(text, in: storage), attributes: volatile)
+            storage.replaceCharacters(in: NSRange(location: transcriptEnd, length: volatileLength), with: piece)
+            volatileLength = piece.length
+        }
+    }
+
+    private func appendFinal(_ text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        writeTranscript { storage, attributes in
+            storage.deleteCharacters(in: NSRange(location: transcriptEnd, length: volatileLength))
+            volatileLength = 0
+            guard !text.isEmpty else { return }
+            var piece = spaced(text, in: storage)
+            // Nouveau paragraphe toutes les ~600 lettres, à la fin d'une phrase.
+            let ns = storage.string as NSString
+            let paragraph = ns.paragraphRange(for: NSRange(location: max(0, transcriptEnd - 1), length: 0))
+            if paragraph.length > 600, let last = text.last, ".?!".contains(last) { piece += "\n" }
+            let attributed = NSAttributedString(string: piece, attributes: attributes)
+            storage.insert(attributed, at: transcriptEnd)
+            transcriptEnd += attributed.length
+        }
+    }
+
+    /// Une espace avant le nouveau texte, sauf en début de paragraphe.
+    private func spaced(_ text: String, in storage: NSTextStorage) -> String {
+        guard transcriptEnd > 0 else { return text }
+        let previous = (storage.string as NSString).character(at: transcriptEnd - 1)
+        return previous == 10 || previous == 32 ? text : " " + text
+    }
+
+    /// Modifie le texte de la transcription sans toucher à la sélection ni à l'annulation,
+    /// et suit le bas du document si le curseur y est.
+    private func writeTranscript(_ edit: (NSTextStorage, [NSAttributedString.Key: Any]) -> Void) {
+        guard let storage, let textView else { return }
+        let following = textView.selectedRange().location >= storage.length - volatileLength
+        var attributes = LessonStyle.attributes(.body)
+        attributes[.ezTranscript] = true
+        writingTranscript = true
+        storage.beginEditing()
+        edit(storage, attributes)
+        storage.endEditing()
+        writingTranscript = false
+        if following { textView.scrollRangeToVisible(NSRange(location: storage.length, length: 0)) }
+    }
+
+    /// ⌘Z après un enregistrement remet le document d'avant le cours.
+    private func registerTranscriptUndo(original: NSAttributedString) {
+        guard let undoManager, let storage else { return }
+        undoManager.registerUndo(withTarget: self) { controller in
+            controller.abandonRecording()
+            let now = NSAttributedString(attributedString: storage)
+            controller.replaceAll(with: original)
+            controller.registerSwap(back: now, current: original)
+        }
+        undoManager.setActionName("Enregistrement du cours")
     }
 
     /// ⌘Z remet les notes, ⇧⌘Z remet la leçon.

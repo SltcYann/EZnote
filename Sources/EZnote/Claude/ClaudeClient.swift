@@ -32,11 +32,11 @@ struct ClaudeClient {
     static let model = "claude-opus-5-5"
     private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
-    func lesson(from notes: String, webSearch: Bool) -> AsyncThrowingStream<Event, Error> {
+    func lesson(from notes: String, context: LessonPrompt.Context, webSearch: Bool) -> AsyncThrowingStream<Event, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let user: [String: Any] = ["role": "user", "content": LessonPrompt.userMessage(notes: notes)]
+                    let user: [String: Any] = ["role": "user", "content": LessonPrompt.userMessage(notes: notes, context: context)]
                     var assistant: [[String: Any]] = []
                     // Avec la recherche web, le serveur peut mettre le tour en pause (« pause_turn ») :
                     // on renvoie alors la réponse partielle et il reprend là où il s'était arrêté.
