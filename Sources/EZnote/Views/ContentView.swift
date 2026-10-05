@@ -6,6 +6,7 @@ struct ContentView: View {
     var fileURL: URL?
     @StateObject private var editor = EditorController()
     @State private var showsContext = false
+    @State private var showsStyles = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -71,20 +72,39 @@ struct ContentView: View {
         }
 
         ToolbarItemGroup(placement: .principal) {
-            Menu {
-                ForEach(LessonStyle.Block.allCases, id: \.self) { block in
-                    Button { editor.setBlock(block) } label: {
-                        if block == editor.block { Label(block.label, systemImage: "checkmark") } else { Text(block.label) }
+            // Bouton texte (la barre d'outils masque le texte des menus) qui ouvre la liste des styles.
+            Button { showsStyles.toggle() } label: {
+                HStack(spacing: 5) {
+                    Text(editor.block.label).font(.system(size: 13, weight: .semibold))
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
+                }
+                .foregroundStyle(UY.ink)
+                .frame(minWidth: 92)
+            }
+            .help("Style du paragraphe")
+            .disabled(editor.isWorking)
+            .popover(isPresented: $showsStyles, arrowEdge: .bottom) {
+                VStack(spacing: 4) {
+                    ForEach(LessonStyle.Block.allCases, id: \.self) { block in
+                        Button { editor.setBlock(block); showsStyles = false } label: {
+                            Text(block.label)
+                                .font(.system(size: block.previewSize, weight: block == .body ? .regular : .bold))
+                                .foregroundStyle(block == editor.block ? UY.claudeStrong : UY.ink)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
+                                .contentShape(RoundedRectangle(cornerRadius: UY.radiusField, style: .continuous))
+                        }
+                        .buttonStyle(UYPressStyle(radius: UY.radiusField))
+                        .background {
+                            if block == editor.block {
+                                RoundedRectangle(cornerRadius: UY.radiusField, style: .continuous).fill(UY.claude.opacity(0.14))
+                            }
+                        }
                     }
                 }
-            } label: {
-                Label(editor.block.label, systemImage: "textformat")
-                    .labelStyle(.titleAndIcon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .fixedSize()
+                .padding(UY.space12)
+                .frame(width: 210)
             }
-            .fixedSize()
-            .help("Style du paragraphe")
 
             toolButton("Gras", icon: "bold", active: editor.formats.contains(.bold)) { editor.toggleBold() }
             toolButton("Italique", icon: "italic", active: editor.formats.contains(.italic)) { editor.toggleItalic() }
@@ -143,14 +163,13 @@ struct ContentView: View {
         }
     }
 
-    /// Bouton de mise en forme : rempli d'orange quand le format est actif à l'endroit du curseur.
-    @ViewBuilder
+    /// Bouton de mise en forme : l'icône passe en orange quand le format est actif à l'endroit du curseur
+    /// (le bouton garde sa place dans le groupe).
     private func toolButton(_ title: String, icon: String, active: Bool, action: @escaping () -> Void) -> some View {
-        let button = Button(action: action) {
-            UYSymbol(name: icon, size: 14).foregroundStyle(active ? Color.white : UY.ink)
-        }
-        Group {
-            if active { button.buttonStyle(.glassProminent).tint(UY.claude) } else { button }
+        Button(action: action) {
+            UYSymbol(name: icon, size: 14, weight: active ? .heavy : .semibold)
+                .foregroundStyle(active ? UY.claudeStrong : UY.ink)
+                .animation(UY.ease(0.2), value: active)
         }
         .help(title)
         .accessibilityLabel(title)
@@ -189,14 +208,16 @@ struct ContextEditor: View {
     var body: some View {
         TextEditor(text: $text)
             .font(UY.subheadline)
+            .multilineTextAlignment(.center)
             .scrollContentBackground(.hidden)
             .padding(10)
             .background(RoundedRectangle(cornerRadius: UY.radiusField, style: .continuous).fill(UY.track))
-            .overlay(alignment: .topLeading) {
+            .overlay(alignment: .top) {
                 if text.isEmpty {
                     Text(placeholder)
                         .font(UY.subheadline)
                         .foregroundStyle(UY.inkSecondary)
+                        .multilineTextAlignment(.center)
                         .padding(.horizontal, 15)
                         .padding(.vertical, 10)
                         .allowsHitTesting(false)

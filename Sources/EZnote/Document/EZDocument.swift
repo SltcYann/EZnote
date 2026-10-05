@@ -80,6 +80,8 @@ enum NoteFile {
         var transcripts: [Span]?
         var audio: [Span]?
         var marks: [Span]?
+        /// Passages en police système (San Francisco), que le RTF remplace par Helvetica.
+        var systemFonts: [Span]?
         var info: DocumentInfo?
         /// Texte brut, pour la recherche de la bibliothèque sans tout décoder.
         var plainText: String?
@@ -112,6 +114,7 @@ enum NoteFile {
             apply(payload.audio, key: .ezAudio) { $0.kind }
             apply(payload.marks, key: .ezMark) { $0.kind }
             apply(payload.additions, key: .ezAddition) { ClaudeAddition(kind: $0.kind, author: $0.author ?? "Claude") }
+            apply(payload.systemFonts, key: .font) { systemFont($0.kind) }
             info = payload.info ?? DocumentInfo()
         } else if type.conforms(to: .flatRTFD), let decoded = NSAttributedString(rtfd: data, documentAttributes: nil) {
             text = NSMutableAttributedString(attributedString: decoded)
@@ -123,7 +126,10 @@ enum NoteFile {
             text = NSMutableAttributedString(string: String(decoding: data, as: UTF8.self), attributes: LessonStyle.attributes(.body))
         }
         // La couleur du texte n'est pas enregistrée : on remet la couleur système, qui suit le mode sombre.
+        // Le RTF ajoute aussi une couleur de soulignement noire, invisible en mode sombre : on l'enlève.
         let all = NSRange(location: 0, length: text.length)
+        text.removeAttribute(.underlineColor, range: all)
+        text.removeAttribute(.strikethroughColor, range: all)
         text.enumerateAttribute(.foregroundColor, in: all) { value, range, _ in
             if value == nil { text.addAttribute(.foregroundColor, value: NSColor.textColor, range: range) }
         }
@@ -156,6 +162,10 @@ enum NoteFile {
         payload.transcripts = spans(.ezTranscript) { _ in Span(kind: "transcription") }
         payload.audio = spans(.ezAudio) { ($0 as? String).map { Span(kind: $0) } }
         payload.marks = spans(.ezMark) { ($0 as? String).map { Span(kind: $0) } }
+        payload.systemFonts = spans(.font) { value in
+            guard let font = value as? NSFont, font.fontName.hasPrefix(".") else { return nil }
+            return Span(kind: describe(font))
+        }
         payload.info = snapshot.info
         payload.plainText = text.string
         return try JSONEncoder().encode(payload)
@@ -188,6 +198,21 @@ enum NoteFile {
         resized.unlockFocus()
         guard let tiff = resized.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
         return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+    }
+
+    /// Police système décrite par « taille|graisse|italique » (ex. « 15|0.4|1 »).
+    private static func describe(_ font: NSFont) -> String {
+        let traits = font.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any]
+        let weight = traits?[.weight] as? CGFloat ?? 0
+        let italic = NSFontManager.shared.traits(of: font).contains(.italicFontMask)
+        return "\(font.pointSize)|\(weight)|\(italic ? 1 : 0)"
+    }
+
+    private static func systemFont(_ description: String) -> NSFont {
+        let parts = description.split(separator: "|").compactMap { Double($0) }
+        guard parts.count == 3 else { return LessonStyle.bodyFont }
+        let font = NSFont.systemFont(ofSize: parts[0], weight: NSFont.Weight(parts[1]))
+        return parts[2] == 1 ? NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) : font
     }
 
     /// Le lecteur RTF de macOS garde les listes dans le style des paragraphes mais supprime le texte des

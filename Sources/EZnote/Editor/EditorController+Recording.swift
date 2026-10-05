@@ -186,7 +186,12 @@ extension EditorController {
         let range = textView.selectedRange()
         var base = textView.typingAttributes
         base.removeValue(forKey: .ezMark)
-        let chip = mark.attributed(base: base)
+        let chip = NSMutableAttributedString()
+        let ns = storage.string as NSString
+        if range.location > 0, ![10, 32].contains(ns.character(at: range.location - 1)) {
+            chip.append(NSAttributedString(string: " ", attributes: base))
+        }
+        chip.append(mark.attributed(base: base))
         guard textView.shouldChangeText(in: NSRange(location: range.location, length: 0), replacementString: chip.string) else { return }
         storage.insert(chip, at: range.location)
         textView.didChangeText()

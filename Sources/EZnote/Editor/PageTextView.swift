@@ -104,6 +104,7 @@ final class PageScrollView: NSScrollView {
 /// Appelé par la page (et non par la colonne de texte, qui couperait les côtés du contour).
 final class ClaudeLayoutManager: NSLayoutManager {
     func drawClaudeBoxes(in rect: NSRect, origin: NSPoint) {
+        drawMarkChips(in: rect, origin: origin)
         if let storage = textStorage, let container = textContainers.first, storage.length > 0 {
             let pad = LessonStyle.Box.top + LessonStyle.Box.bottom
             let area = NSRect(x: 0, y: rect.minY - origin.y - pad, width: container.size.width, height: rect.height + 2 * pad)
@@ -122,6 +123,23 @@ final class ClaudeLayoutManager: NSLayoutManager {
         }
     }
 
+    /// Fond arrondi des marque-pages « ★ Important » / « ? Pas compris ».
+    private func drawMarkChips(in rect: NSRect, origin: NSPoint) {
+        guard let storage = textStorage, let container = textContainers.first, storage.length > 0 else { return }
+        let area = NSRect(x: 0, y: rect.minY - origin.y - 20, width: container.size.width, height: rect.height + 40)
+        let characters = characterRange(forGlyphRange: glyphRange(forBoundingRect: area, in: container), actualGlyphRange: nil)
+        storage.enumerateAttribute(.ezMark, in: characters) { value, range, _ in
+            guard value != nil else { return }
+            enumerateEnclosingRects(forGlyphRange: glyphRange(forCharacterRange: range, actualCharacterRange: nil),
+                                    withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0), in: container) { box, _ in
+                let chip = box.offsetBy(dx: origin.x, dy: origin.y).insetBy(dx: 0, dy: 1)
+                let path = NSBezierPath(roundedRect: chip, xRadius: chip.height / 2, yRadius: chip.height / 2)
+                NSColor.claude.withAlphaComponent(0.16).setFill()
+                path.fill()
+            }
+        }
+    }
+
     private func drawBox(_ addition: ClaudeAddition, characters: NSRange, storage: NSTextStorage,
                          container: NSTextContainer, origin: NSPoint) {
         let glyphs = glyphRange(forCharacterRange: characters, actualCharacterRange: nil)
@@ -132,7 +150,10 @@ final class ClaudeLayoutManager: NSLayoutManager {
         let lastStyle = storage.attribute(.paragraphStyle, at: NSMaxRange(characters) - 1, effectiveRange: nil) as? NSParagraphStyle
 
         let top = first.minY + (firstStyle?.paragraphSpacingBefore ?? 0) - LessonStyle.Box.top
-        let bottom = last.maxY - (lastStyle?.paragraphSpacing ?? 0) + LessonStyle.Box.bottom
+        // L'espace après un paragraphe n'est ajouté que s'il se termine par un retour à la ligne
+        // (pas pour le dernier paragraphe du document).
+        let endsWithNewline = (storage.string as NSString).character(at: NSMaxRange(characters) - 1) == 10
+        let bottom = last.maxY - (endsWithNewline ? lastStyle?.paragraphSpacing ?? 0 : 0) + LessonStyle.Box.bottom
         let box = NSRect(x: origin.x - LessonStyle.Box.side, y: origin.y + top,
                          width: container.size.width + 2 * LessonStyle.Box.side, height: max(0, bottom - top))
 

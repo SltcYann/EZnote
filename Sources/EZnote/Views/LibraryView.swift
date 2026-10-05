@@ -132,7 +132,11 @@ private struct LibraryRow: View {
 
     /// Extrait du texte autour du mot cherché (ou le début du cours).
     private var snippet: String {
-        let text = item.text.replacingOccurrences(of: "\n", with: " ")
+        // Texte d'une ligne : sans retours, tabulations ni puces de liste.
+        let text = item.text
+            .replacingOccurrences(of: #"[\t\n\u{FFFC}]+|[•◦▪]\s"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #" {2,}"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
         guard !search.isEmpty, let range = text.range(of: search, options: [.caseInsensitive, .diacriticInsensitive]) else {
             return String(text.prefix(140))
         }

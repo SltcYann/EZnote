@@ -32,12 +32,14 @@ struct RevisionView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .tint(UY.claude)
                 .frame(width: 220)
                 Spacer()
             }
             .overlay(alignment: .trailing) {
                 Button { dismiss() } label: { UYSymbol(name: "xmark", size: 12) }
                     .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                     .keyboardShortcut(.cancelAction)
             }
 
@@ -62,6 +64,8 @@ struct RevisionView: View {
         }
         .padding(UY.space24)
         .frame(width: 600, height: 560)
+        .uyMakeKeyOnAppear()
+        .onExitCommand { dismiss() }
         .onAppear(perform: startSession)
     }
 
@@ -160,16 +164,28 @@ struct RevisionView: View {
                 Text(question.question).font(UY.title3).multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 ForEach(question.choices.indices, id: \.self) { i in
+                    let tint = color(for: i, in: question)
                     Button { pick(i) } label: {
-                        Text(question.choices[i])
-                            .frame(maxWidth: .infinity)
-                            .multilineTextAlignment(.center)
-                            .padding(.vertical, 4)
+                        HStack(spacing: 8) {
+                            if let tint {
+                                Image(systemName: tint == UY.green ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                    .foregroundStyle(tint)
+                            }
+                            Text(question.choices[i]).multilineTextAlignment(.center)
+                        }
+                        .font(UY.subheadline)
+                        .foregroundStyle(UY.ink)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 14)
+                        .background(RoundedRectangle(cornerRadius: UY.radiusField, style: .continuous)
+                            .fill((tint ?? UY.ink).opacity(tint == nil ? 0.07 : 0.2)))
+                        .overlay(RoundedRectangle(cornerRadius: UY.radiusField, style: .continuous)
+                            .strokeBorder(tint ?? .clear, lineWidth: 1.5))
+                        .opacity(picked != nil && tint == nil ? 0.55 : 1)
                     }
-                    .buttonStyle(.glass)
-                    .tint(color(for: i, in: question))
-                    .controlSize(.large)
-                    .disabled(picked != nil)
+                    .buttonStyle(UYPressStyle(radius: UY.radiusField))
+                    .allowsHitTesting(picked == nil)
                 }
                 if let picked {
                     Text((picked == question.answer ? "Bonne réponse. " : "Ce n'est pas ça. ") + question.explanation)
@@ -293,6 +309,8 @@ struct SummaryView: View {
         }
         .padding(UY.space24)
         .frame(width: 640, height: 640)
+        .uyMakeKeyOnAppear()
+        .onExitCommand { task?.cancel(); dismiss() }
         .onAppear(perform: generate)
         .onDisappear { task?.cancel() }
     }
@@ -361,6 +379,8 @@ struct QuestionView: View {
         }
         .padding(UY.space24)
         .frame(width: 560, height: 520)
+        .uyMakeKeyOnAppear()
+        .onExitCommand { task?.cancel(); dismiss() }
         .onDisappear { task?.cancel() }
     }
 
@@ -389,24 +409,45 @@ struct QuestionView: View {
 
 // MARK: - Texte rendu
 
-/// Markdown de l'IA affiché avec la typographie d'EZnote (lecture seule).
+/// Markdown de l'IA affiché avec la typographie d'EZnote (lecture seule). TextKit 1, comme l'éditeur :
+/// le moteur récent n'affiche pas le texte des listes « \t•\t ».
 struct RenderedText: NSViewRepresentable {
     let markdown: String
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSTextView.scrollableTextView()
+        let storage = NSTextStorage()
+        let layoutManager = ClaudeLayoutManager()
+        storage.addLayoutManager(layoutManager)
+        let container = NSTextContainer(size: NSSize(width: 400, height: CGFloat.greatestFiniteMagnitude))
+        container.widthTracksTextView = true
+        layoutManager.addTextContainer(container)
+        let textView = RenderedTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), textContainer: container)
+        textView.keptStorage = storage
+        textView.isEditable = false
+        textView.drawsBackground = false
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.textContainerInset = NSSize(width: LessonStyle.Box.side + 4, height: 16)
+        let scroll = NSScrollView()
         scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        if let textView = scroll.documentView as? NSTextView {
-            textView.isEditable = false
-            textView.drawsBackground = false
-            textView.textContainerInset = NSSize(width: 18, height: 16)
-        }
+        scroll.documentView = textView
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
-        guard let textView = scroll.documentView as? NSTextView else { return }
-        textView.textStorage?.setAttributedString(LessonRenderer.render(markdown, author: AI.authorName))
+        guard let textView = scroll.documentView as? NSTextView, let storage = textView.textStorage else { return }
+        storage.setAttributedString(LessonRenderer.render(markdown, author: AI.authorName))
+        LessonStyle.normalizeSpacing(storage, around: NSRange(location: 0, length: storage.length))
+    }
+}
+
+/// Texte en lecture seule qui dessine aussi les encadrés de l'IA.
+final class RenderedTextView: NSTextView {
+    var keptStorage: NSTextStorage?
+
+    override func drawBackground(in rect: NSRect) {
+        (layoutManager as? ClaudeLayoutManager)?.drawClaudeBoxes(in: rect, origin: textContainerOrigin)
     }
 }

@@ -36,6 +36,16 @@ enum LessonStyle {
             }
         }
 
+        /// Taille d'aperçu dans la liste des styles.
+        var previewSize: CGFloat {
+            switch self {
+            case .title: return 20
+            case .heading: return 17
+            case .subheading: return 15
+            case .body: return 13
+            }
+        }
+
         var label: String {
             switch self {
             case .title: return "Titre"
@@ -99,11 +109,13 @@ enum LessonStyle {
         "\t" + list.marker(forItemNumber: number) + "\t"
     }
 
-    static func applyList(_ list: NSTextList?, to style: NSMutableParagraphStyle) {
+    /// `level` : 0 pour une liste, 1 ou 2 pour une sous-liste (décalée de 22 pt par niveau).
+    static func applyList(_ list: NSTextList?, to style: NSMutableParagraphStyle, level: Int = 0) {
         if let list {
+            let shift = CGFloat(level) * 22
             style.textLists = [list]
-            style.tabStops = [NSTextTab(textAlignment: .left, location: 8), NSTextTab(textAlignment: .left, location: 30)]
-            style.headIndent = 30
+            style.tabStops = [NSTextTab(textAlignment: .left, location: 8 + shift), NSTextTab(textAlignment: .left, location: 30 + shift)]
+            style.headIndent = 30 + shift
             style.firstLineHeadIndent = 0
         } else {
             style.textLists = []
@@ -176,9 +188,10 @@ enum LessonStyle {
             var attributes = base
             attributes[.font] = NSFont.systemFont(ofSize: 12.5, weight: .bold)
             attributes[.foregroundColor] = NSColor.claude
-            attributes[.backgroundColor] = NSColor.claude.withAlphaComponent(0.14)
             attributes[.ezMark] = rawValue
             attributes.removeValue(forKey: .ezAudio)
+            attributes.removeValue(forKey: .backgroundColor)
+            // Fond arrondi dessiné par ClaudeLayoutManager ; espaces fines pour l'air autour du texte.
             let chip = NSMutableAttributedString(string: "\u{2009}\(label)\u{2009}", attributes: attributes)
             chip.append(NSAttributedString(string: " ", attributes: base))
             return chip
@@ -187,22 +200,34 @@ enum LessonStyle {
 
     // MARK: Images
 
+    /// L'image d'origine (pleine résolution) d'une pièce jointe.
     static func image(of attachment: NSTextAttachment) -> NSImage? {
-        if let image = attachment.image { return image }
-        if let data = attachment.fileWrapper?.regularFileContents ?? attachment.contents { return NSImage(data: data) }
-        return nil
+        if let data = attachment.fileWrapper?.regularFileContents ?? attachment.contents, let image = NSImage(data: data) {
+            return image
+        }
+        return attachment.image
     }
 
     /// Les photos collées ou glissées gardent leurs proportions mais ne dépassent pas la largeur de la colonne.
     static func fitAttachments(_ storage: NSTextStorage, in range: NSRange, width: CGFloat = PageTextView.column) {
         let range = NSIntersectionRange(range, NSRange(location: 0, length: storage.length))
         guard range.length > 0 else { return }
-        storage.enumerateAttribute(.attachment, in: range) { value, _, _ in
-            guard let attachment = value as? NSTextAttachment, attachment.bounds.isEmpty || attachment.bounds.width > width,
-                  let image = image(of: attachment), image.size.width > 0 else { return }
+        storage.enumerateAttribute(.attachment, in: range) { value, run, _ in
+            guard let attachment = value as? NSTextAttachment, let image = image(of: attachment),
+                  image.size.width > 0, image.size.height > 0 else { return }
+            // Toujours recalculé : à la relecture d'un fichier, la taille enregistrée n'est pas fiable.
             let scale = min(1, width / image.size.width, 520 / image.size.height)
-            attachment.bounds = CGRect(x: 0, y: 0, width: (image.size.width * scale).rounded(),
-                                       height: (image.size.height * scale).rounded())
+            let bounds = CGRect(x: 0, y: 0, width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
+            guard attachment.bounds != bounds || attachment.image?.size != bounds.size else { return }
+            attachment.bounds = bounds
+            // À la relecture d'un RTFD, l'image est dessinée par une cellule qui ignore `bounds` :
+            // on lui donne une image déjà à la bonne taille.
+            let shown = image.copy() as! NSImage
+            shown.size = bounds.size
+            attachment.image = shown
+            (attachment.attachmentCell as? NSTextAttachmentCell)?.image = shown
+            // Remettre l'attribut fait refaire la mise en page de l'image à sa nouvelle taille.
+            storage.addAttribute(.attachment, value: attachment, range: run)
         }
     }
 }

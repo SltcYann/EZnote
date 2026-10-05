@@ -16,6 +16,8 @@ enum UY {
     static let focusRing = Color(light: 0x0A6CFF, dark: 0x5AC8FA)
     /// Orange de Claude : le bouton EZifier et le contour des ajouts de Claude.
     static let claude = Color(nsColor: .claude)
+    /// Orange plus marqué pour une icône active posée sur le verre orangé de la barre d'outils.
+    static let claudeStrong = Color(light: 0x9E3412, dark: 0xFFC2A8)
     static let danger = Color(light: 0xD70015, dark: 0xFF453A)
 
     // MARK: Espacements

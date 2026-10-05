@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - MeshBackground
@@ -190,5 +191,49 @@ struct GlassCapsuleLabel<Leading: View>: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .uyGlass(radius: UY.radiusCapsule, tint: tint)
+    }
+}
+
+// MARK: - Interaction
+
+/// Style neutre pour les lignes et tuiles cliquables : légère atténuation à l'appui, estompé si désactivé.
+struct UYPressStyle: ButtonStyle {
+    var radius: CGFloat = UY.radiusCapsule
+
+    func makeBody(configuration: Configuration) -> some View {
+        PressBody(radius: radius, pressed: configuration.isPressed) { configuration.label }
+    }
+
+    private struct PressBody<Content: View>: View {
+        let radius: CGFloat
+        let pressed: Bool
+        @ViewBuilder let content: Content
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            content
+                .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .opacity(!enabled ? 0.45 : (pressed ? 0.75 : 1))
+        }
+    }
+}
+
+// MARK: - Fenêtre active
+
+extension View {
+    /// Rend active la fenêtre (ou la feuille) qui affiche cette vue dès son apparition, pour que le clavier
+    /// (Échap, Retour, raccourcis) lui parvienne sans avoir à cliquer dedans.
+    func uyMakeKeyOnAppear() -> some View { background(KeyWindowMaker()) }
+}
+
+private struct KeyWindowMaker: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Probe() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in self?.window?.makeKey() }
+        }
     }
 }

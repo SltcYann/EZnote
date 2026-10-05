@@ -14,6 +14,8 @@ enum Snapshot {
     - de l'eau, puisée par les racines ;
     - du dioxyde de carbone, capté par les feuilles ;
     - de la lumière : $6CO_2 + 6H_2O \\to C_6H_{12}O_6 + 6O_2$
+      - sous-point capté par la chlorophylle
+        - sous-sous-point
     :::claude À retenir
     Un chêne adulte capte environ 20 kg de CO₂ par an.
 
@@ -25,6 +27,21 @@ enum Snapshot {
 
     static func runIfRequested() {
         let args = CommandLine.arguments
+        if args.contains("--menu-dump") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                func walk(_ menu: NSMenu, _ path: String) {
+                    for item in menu.items {
+                        if path.contains("Format") || item.keyEquivalent.lowercased() == "b" {
+                            let line = "\(path) › \(item.title) [\(item.keyEquivalent)] \(item.keyEquivalentModifierMask.rawValue) \(item.action.map(NSStringFromSelector) ?? "-")\n"
+                            FileHandle.standardError.write(Data(line.utf8))
+                        }
+                        if let sub = item.submenu { walk(sub, path + " › " + item.title) }
+                    }
+                }
+                if let main = NSApp.mainMenu { walk(main, "") }
+                exit(0)
+            }
+        }
         if let i = args.firstIndex(of: "--ai-test") {
             // `EZnote --ai-test [lesson|cards|quiz|summary]` : interroge l'IA réglée sur des notes d'exemple.
             let mode = i + 1 < args.count ? args[i + 1] : "lesson"
@@ -40,6 +57,41 @@ enum Snapshot {
                 exit(0)
             }
             RunLoop.main.run()
+        }
+        if args.contains("--bold-test") {
+            Task { @MainActor in
+                let document = EZDocument()
+                document.storage.setAttributedString(NSAttributedString(string: "Révolution française\nCauses : crise", attributes: LessonStyle.attributes(.body)))
+                let layoutManager = ClaudeLayoutManager()
+                document.storage.addLayoutManager(layoutManager)
+                let container = NSTextContainer(size: NSSize(width: 600, height: 1000))
+                layoutManager.addTextContainer(container)
+                let view = PageTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), textContainer: container)
+                view.allowsUndo = true
+                let editor = EditorController()
+                editor.attach(textView: view, storage: document.storage, document: document)
+                view.setSelectedRange(NSRange(location: 0, length: 21))
+                editor.toggleItalic()
+                let before = (document.storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.fontName ?? "-"
+                editor.toggleBold()
+                let after = (document.storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.fontName ?? "-"
+                print("avant", before, "après", after, "formats", editor.formats)
+                exit(0)
+            }
+            RunLoop.main.run()
+        }
+        if let i = args.firstIndex(of: "--write-samples"), i + 1 < args.count {
+            let folder = URL(fileURLWithPath: args[i + 1])
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            for (name, subject, markdown) in [("Photosynthèse", "SVT", sample),
+                                              ("Révolution française", "Histoire", "# La Révolution française\nLa prise de la Bastille a lieu le 14 juillet 1789."),
+                                              ("Notes en vrac", "", "Penser à réviser les dérivées.")] {
+                var info = DocumentInfo(subject: subject)
+                info.cards = [Flashcard(question: "Q", answer: "R")]
+                let data = try? NoteFile.write(NoteSnapshot(text: LessonRenderer.render(markdown), info: info), type: .ezNote)
+                try? data?.write(to: folder.appendingPathComponent(name + ".eznote"))
+            }
+            exit(0)
         }
         if args.contains("--math-test") {
             for latex in [#"x^2 + y_1 \leq \sqrt{n}"#, #"\frac{a}{b} \to \infty"#, #"\sum_{i=1}^{n} i^2"#,
@@ -82,6 +134,21 @@ enum Snapshot {
                         let i = (0..<min(a.count, b.count)).first { a[$0] != b[$0] } ?? min(a.count, b.count)
                         print("différence à", i, "longueurs", a.count, b.count, "avant:", a[max(0,i-3)..<min(a.count,i+3)], "après:", b[max(0,i-3)..<min(b.count,i+3)])
                     }
+                    var fontDiffs = 0
+                    for i in stride(from: 0, to: min(text.length, back.length), by: 1) {
+                        let a = (text.attribute(.font, at: i, effectiveRange: nil) as? NSFont)
+                        let b = (back.attribute(.font, at: i, effectiveRange: nil) as? NSFont)
+                        let fm = NSFontManager.shared
+                        func key(_ f: NSFont?) -> String {
+                            guard let f else { return "-" }
+                            return "\(f.fontName.hasPrefix(".") ? "système" : f.familyName ?? "") \(f.pointSize) \(fm.traits(of: f).rawValue & (NSFontTraitMask.boldFontMask.rawValue | NSFontTraitMask.italicFontMask.rawValue))"
+                        }
+                        if key(a) != key(b) {
+                            if fontDiffs == 0 { print("police différente à", i, a?.fontName ?? "-", a?.pointSize ?? 0, "→", b?.fontName ?? "-", b?.pointSize ?? 0) }
+                            fontDiffs += 1
+                        }
+                    }
+                    print("polices différentes :", fontDiffs)
                     print("taille", data.count, "| texte identique", back.string == text.string,
                           "| images", attachments, "| marques", marks, "| audio", audio, "| ajouts", additions,
                           "| infos", backInfo == info)
@@ -116,7 +183,9 @@ enum Snapshot {
         :::
         La réaction a lieu dans les chloroplastes.
         """
-        let storage = NSTextStorage(attributedString: LessonRenderer.render(markdown))
+        let rendered = NSMutableAttributedString(attributedString: LessonRenderer.render(markdown))
+        rendered.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: NSRange(location: 0, length: 16))
+        let storage = NSTextStorage(attributedString: rendered)
         LessonStyle.normalizeSpacing(storage, around: NSRange(location: 0, length: storage.length))
         let layoutManager = ClaudeLayoutManager()
         storage.addLayoutManager(layoutManager)

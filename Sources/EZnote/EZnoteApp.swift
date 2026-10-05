@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @main
@@ -15,7 +16,6 @@ struct EZnoteApp: App {
             ContentView(document: file.document, fileURL: file.fileURL)
         }
         .commands {
-            TextFormattingCommands()
             EZnoteCommands()
         }
 
@@ -36,6 +36,45 @@ struct EZnoteCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        // Menu Format : mêmes actions que les boutons de la barre d'outils (le ⌘B du menu système
+        // n'atteignait pas le texte).
+        CommandGroup(replacing: .textFormatting) {
+            Menu("Police") {
+                Button("Afficher les polices") { NSFontManager.shared.orderFrontFontPanel(nil) }
+                    .keyboardShortcut("t")
+                Divider()
+                Button("Gras") { editor?.toggleBold() }.keyboardShortcut("b")
+                Button("Italique") { editor?.toggleItalic() }.keyboardShortcut("i")
+                Button("Souligné") { editor?.toggleUnderline() }.keyboardShortcut("u")
+                Divider()
+                Button("Plus grand") { editor?.changeSize(by: 1) }.keyboardShortcut("=")
+                Button("Plus petit") { editor?.changeSize(by: -1) }.keyboardShortcut("-")
+                Divider()
+                Button("Afficher les couleurs") { NSApp.orderFrontColorPanel(nil) }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+            }
+            .disabled(editor == nil)
+            Menu("Texte") {
+                Button("Aligner à gauche") { NSApp.sendAction(#selector(NSText.alignLeft(_:)), to: nil, from: nil) }
+                    .keyboardShortcut("{")
+                Button("Centrer") { NSApp.sendAction(#selector(NSText.alignCenter(_:)), to: nil, from: nil) }
+                    .keyboardShortcut("|")
+                Button("Justifier") { NSApp.sendAction(#selector(NSTextView.alignJustified(_:)), to: nil, from: nil) }
+                Button("Aligner à droite") { NSApp.sendAction(#selector(NSText.alignRight(_:)), to: nil, from: nil) }
+                    .keyboardShortcut("}")
+            }
+            .disabled(editor == nil)
+            Menu("Style du paragraphe") {
+                ForEach(LessonStyle.Block.allCases, id: \.self) { block in
+                    Button(block.label) { editor?.setBlock(block) }
+                }
+                Divider()
+                Button("Liste à puces") { editor?.toggleList(.disc) }
+                Button("Liste numérotée") { editor?.toggleList(LessonStyle.numbered) }
+            }
+            .disabled(editor == nil)
+        }
+
         CommandMenu("Claude") {
             Group {
                 Button(editor?.isWorking == true ? "Arrêter" : "EZifier") { editor?.ezify() }

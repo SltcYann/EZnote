@@ -95,6 +95,24 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
         return leaveAdditionOnReturn(textView, range: range, text: text)
     }
 
+    /// Retour à la fin d'un titre : la ligne suivante repart en texte normal (comme dans Pages ou Word).
+    func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard selector == #selector(NSResponder.insertNewline(_:)), let storage else { return false }
+        let range = textView.selectedRange()
+        let ns = storage.string as NSString
+        let font = textView.typingAttributes[.font] as? NSFont
+        guard range.length == 0, LessonStyle.Block.of(font) != .body else { return false }
+        let paragraph = ns.paragraphRange(for: range)
+        let contentEnd = NSMaxRange(paragraph) - (ns.substring(with: paragraph).hasSuffix("\n") ? 1 : 0)
+        guard range.location == contentEnd else { return false }
+        textView.insertNewline(nil)
+        var body = LessonStyle.attributes(.body)
+        if let addition = textView.typingAttributes[.ezAddition] { body[.ezAddition] = addition }
+        textView.typingAttributes = body
+        refreshFormats()
+        return true
+    }
+
     /// Retour sur un paragraphe vide au bout d'un ajout de l'IA : on sort du contour (comme pour une liste).
     private func leaveAdditionOnReturn(_ textView: NSTextView, range: NSRange, text: String?) -> Bool {
         guard text == "\n", range.length == 0, let storage else { return true }
@@ -198,6 +216,25 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
         guard textView.shouldChangeText(in: range, replacementString: nil) else { return }
         if on { storage.removeAttribute(.underlineStyle, range: range) }
         else { storage.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: range) }
+        textView.didChangeText()
+    }
+
+    /// Format › Police › Plus grand / Plus petit, d'un point.
+    func changeSize(by delta: CGFloat) {
+        guard let textView, let storage, !isWorking else { return }
+        let fm = NSFontManager.shared
+        let range = textView.selectedRange()
+        func resized(_ font: NSFont) -> NSFont { fm.convert(font, toSize: max(8, font.pointSize + delta)) }
+        if range.length == 0 {
+            textView.typingAttributes[.font] = resized(textView.typingAttributes[.font] as? NSFont ?? LessonStyle.bodyFont)
+            return
+        }
+        guard textView.shouldChangeText(in: range, replacementString: nil) else { return }
+        storage.beginEditing()
+        storage.enumerateAttribute(.font, in: range) { value, run, _ in
+            storage.addAttribute(.font, value: resized(value as? NSFont ?? LessonStyle.bodyFont), range: run)
+        }
+        storage.endEditing()
         textView.didChangeText()
     }
 

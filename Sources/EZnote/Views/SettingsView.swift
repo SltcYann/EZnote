@@ -50,6 +50,7 @@ private struct DocumentsSettings: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .tint(UY.claude)
             .frame(width: 260)
             .onChange(of: appearance) { _, value in AppAppearance.apply(value) }
 
@@ -101,6 +102,7 @@ private struct ClaudeSettings: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .tint(UY.claude)
             .frame(width: 380)
 
             switch ClaudeConnection(rawValue: connection) ?? .subscription {
@@ -109,9 +111,15 @@ private struct ClaudeSettings: View {
             case .local: LocalModelSettings()
             }
 
-            Toggle("Autoriser l'IA à chercher sur le web (faits, exemples et contexte du cours)", isOn: $webSearch)
-                .toggleStyle(.switch)
-                .font(UY.subheadline)
+            VStack(spacing: UY.space8) {
+                Toggle("", isOn: $webSearch)
+                    .toggleStyle(.switch)
+                    .tint(UY.claude)
+                    .labelsHidden()
+                Text("Autoriser l'IA à chercher sur le web (faits, exemples et contexte du cours)")
+                    .font(UY.subheadline)
+                    .multilineTextAlignment(.center)
+            }
                 .disabled(connection == ClaudeConnection.local.rawValue)
         }
         .padding(UY.space32)

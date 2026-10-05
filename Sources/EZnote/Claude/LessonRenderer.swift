@@ -21,6 +21,8 @@ enum LessonRenderer {
         let out = NSMutableAttributedString()
         var addition: ClaudeAddition?
         let bullets = NSTextList(markerFormat: .disc, options: 0)
+        // Sous-listes : « ◦ » puis « ▪ » (deux espaces ou une tabulation par niveau dans le Markdown).
+        let subBullets = [NSTextList(markerFormat: .circle, options: 0), NSTextList(markerFormat: .square, options: 0)]
         var numbers = NSTextList(markerFormat: LessonStyle.numbered, options: 0)
         var lastWasNumbered = false
 
@@ -69,12 +71,17 @@ enum LessonRenderer {
             var text = Substring(line)
             var list: NSTextList?
             var number = 1
+            let indent = raw.prefix { $0 == " " || $0 == "\t" }.reduce(0) { $0 + ($1 == "\t" ? 2 : 1) }
+            let level = min(2, indent / 2)
 
             if line.hasPrefix("#### ") { block = .subheading; text = text.dropFirst(5) }
             else if line.hasPrefix("### ") { block = .subheading; text = text.dropFirst(4) }
             else if line.hasPrefix("## ") { block = .heading; text = text.dropFirst(3) }
             else if line.hasPrefix("# ") { block = .title; text = text.dropFirst(2) }
-            else if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ") { list = bullets; text = text.dropFirst(2) }
+            else if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ") {
+                list = level == 0 ? bullets : subBullets[level - 1]
+                text = text.dropFirst(2)
+            }
             else if line.hasPrefix("> ") { text = text.dropFirst(2) }
             else if let match = numbered.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) {
                 number = Int((line as NSString).substring(with: match.range(at: 1))) ?? 1
@@ -87,7 +94,7 @@ enum LessonRenderer {
             let paragraph = inline(String(text), font: block.font)
             let style = LessonStyle.paragraph(block)
             if let list {
-                LessonStyle.applyList(list, to: style)
+                LessonStyle.applyList(list, to: style, level: list === numbers ? min(level, 1) : level)
                 paragraph.insert(NSAttributedString(string: LessonStyle.marker(list, number: number),
                                                     attributes: [.font: block.font, .foregroundColor: NSColor.textColor]), at: 0)
             }
