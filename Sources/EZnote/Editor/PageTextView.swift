@@ -9,6 +9,22 @@ final class PageTextView: NSTextView {
 
     var placeholder = "Commence à prendre tes notes…"
 
+    // MARK: Curseur : la barre de texte seulement sur la feuille, la flèche autour.
+
+    override func resetCursorRects() {
+        addCursorRect(visibleRect.intersection(paperRect), cursor: .iBeam)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        if paperRect.contains(convert(event.locationInWindow, from: nil)) { super.mouseMoved(with: event) }
+        else { NSCursor.arrow.set() }
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if paperRect.contains(convert(event.locationInWindow, from: nil)) { super.cursorUpdate(with: event) }
+        else { NSCursor.arrow.set() }
+    }
+
     private var paperRect: NSRect {
         let width = textContainer?.size.width ?? Self.column
         return NSRect(x: textContainerOrigin.x - Self.margin, y: 24,
@@ -113,7 +129,7 @@ final class ClaudeLayoutManager: NSLayoutManager {
         path.stroke()
 
         // Étiquette : ✦ Claude · Exemple
-        let label = NSMutableAttributedString(string: "Claude", attributes: [
+        let label = NSMutableAttributedString(string: addition.author, attributes: [
             .font: NSFont.systemFont(ofSize: 11.5, weight: .bold), .foregroundColor: NSColor.claude,
         ])
         if !addition.kind.isEmpty {

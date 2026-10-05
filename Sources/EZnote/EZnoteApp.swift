@@ -7,6 +7,7 @@ struct EZnoteApp: App {
         Snapshot.runIfRequested()
         #endif
         SaveFolder.apply()
+        DateNames.install()
     }
 
     var body: some Scene {

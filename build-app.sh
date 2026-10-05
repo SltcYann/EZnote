@@ -31,6 +31,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>NSAppTransportSecurity</key>
+    <dict><key>NSAllowsLocalNetworking</key><true/></dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>EZnote écoute le cours pour écrire ce que dit le professeur dans ton document.</string>
     <key>NSSpeechRecognitionUsageDescription</key>

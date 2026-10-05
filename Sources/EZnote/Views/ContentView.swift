@@ -10,8 +10,9 @@ struct ContentView: View {
         ZStack(alignment: .bottom) {
             MeshBackground(mood: editor.isWorking ? .claude : .calm)
             EditorView(document: document, controller: editor)
+                .uyEdgeFade(28)
             if editor.isWorking {
-                StatusPill(phase: editor.phase)
+                StatusPill(phase: editor.phase, author: editor.author)
                     .padding(.bottom, UY.space24)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if editor.isRecording {
@@ -24,6 +25,7 @@ struct ContentView: View {
         .animation(UY.ease(0.35), value: editor.isRecording)
         .onAppear {
             SaveFolder.apply()
+            AppAppearance.apply()
             editor.documentTitle = fileURL?.deletingPathExtension().lastPathComponent
         }
         .onChange(of: fileURL) { _, url in editor.documentTitle = url?.deletingPathExtension().lastPathComponent }
@@ -45,21 +47,25 @@ struct ContentView: View {
         ToolbarItemGroup(placement: .principal) {
             Menu {
                 ForEach(LessonStyle.Block.allCases, id: \.self) { block in
-                    Button(block.label) { editor.setBlock(block) }
+                    Button { editor.setBlock(block) } label: {
+                        if block == editor.block { Label(block.label, systemImage: "checkmark") } else { Text(block.label) }
+                    }
                 }
             } label: {
-                Label("Style", systemImage: "textformat.size")
+                Label(editor.block.label, systemImage: "textformat")
+                    .labelStyle(.titleAndIcon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .fixedSize()
             }
+            .fixedSize()
             .help("Style du paragraphe")
 
-            ControlGroup {
-                toolButton("Gras", icon: "bold") { editor.toggleBold() }
-                toolButton("Italique", icon: "italic") { editor.toggleItalic() }
-                toolButton("Souligné", icon: "underline") { editor.toggleUnderline() }
-            }
-            ControlGroup {
-                toolButton("Liste à puces", icon: "list.bullet") { editor.toggleList(.disc) }
-                toolButton("Liste numérotée", icon: "list.number") { editor.toggleList(LessonStyle.numbered) }
+            toolButton("Gras", icon: "bold", active: editor.formats.contains(.bold)) { editor.toggleBold() }
+            toolButton("Italique", icon: "italic", active: editor.formats.contains(.italic)) { editor.toggleItalic() }
+            toolButton("Souligné", icon: "underline", active: editor.formats.contains(.underline)) { editor.toggleUnderline() }
+            toolButton("Liste à puces", icon: "list.bullet", active: editor.formats.contains(.bullets)) { editor.toggleList(.disc) }
+            toolButton("Liste numérotée", icon: "list.number", active: editor.formats.contains(.numbers)) {
+                editor.toggleList(LessonStyle.numbered)
             }
         }
 
@@ -88,11 +94,19 @@ struct ContentView: View {
         }
     }
 
-    private func toolButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { UYSymbol(name: icon, size: 14) }
-            .help(title)
-            .accessibilityLabel(title)
-            .disabled(editor.isWorking)
+    /// Bouton de mise en forme : rempli d'orange quand le format est actif à l'endroit du curseur.
+    @ViewBuilder
+    private func toolButton(_ title: String, icon: String, active: Bool, action: @escaping () -> Void) -> some View {
+        let button = Button(action: action) {
+            UYSymbol(name: icon, size: 14).foregroundStyle(active ? Color.white : UY.ink)
+        }
+        Group {
+            if active { button.buttonStyle(.glassProminent).tint(UY.claude) } else { button }
+        }
+        .help(title)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(active ? .isSelected : [])
+        .disabled(editor.isWorking)
     }
 }
 
@@ -140,12 +154,13 @@ private struct RecordingPill: View {
 /// Capsule en bas de la fenêtre pendant que Claude travaille.
 private struct StatusPill: View {
     let phase: EditorController.Phase
+    let author: String
 
     private var text: String {
         switch phase {
-        case .idle, .reading: return "Claude lit tes notes…"
-        case .searching: return "Claude cherche sur le web…"
-        case .writing: return "Claude rédige ta leçon…"
+        case .idle, .reading: return "\(author) lit tes notes…"
+        case .searching: return "\(author) cherche sur le web…"
+        case .writing: return "\(author) rédige ta leçon…"
         }
     }
 

@@ -64,6 +64,19 @@ extension View {
     }
 }
 
+extension View {
+    /// Fondu en haut et en bas d'une zone qui défile, pour que le contenu ne soit pas coupé net.
+    func uyEdgeFade(_ size: CGFloat = UY.space22) -> some View {
+        mask {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: size)
+                Rectangle()
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: size)
+            }
+        }
+    }
+}
+
 // MARK: - Icônes centrées
 
 /// Centrage optique automatique des SF Symbols : on rend le symbole une fois, on mesure où tombe

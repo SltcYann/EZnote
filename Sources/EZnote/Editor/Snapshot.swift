@@ -6,6 +6,21 @@ import AppKit
 enum Snapshot {
     static func runIfRequested() {
         let args = CommandLine.arguments
+        if args.contains("--local-test") {
+            // `EZnote --local-test` : EZifie des notes d'exemple avec le modèle local et affiche le Markdown.
+            Task {
+                do {
+                    var output = ""
+                    let notes = "photosynthèse\nplantes → matière organique avec lumière\nchloroplastes, CO2 + eau"
+                    for try await event in LocalModelClient().lesson(from: notes, context: .init(title: nil)) {
+                        if case .text(let t) = event { output += t }
+                    }
+                    print(output)
+                } catch { print("ERREUR:", error.localizedDescription) }
+                exit(0)
+            }
+            RunLoop.main.run()
+        }
         guard let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count else { return }
         let dark = args.contains("dark")
         let markdown = """

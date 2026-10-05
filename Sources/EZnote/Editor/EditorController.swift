@@ -12,10 +12,17 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
     @Published var errorMessage: String?
     @Published var needsAPIKey = false
 
+    /// Mise en forme à l'endroit du curseur, pour allumer les boutons de la barre d'outils.
+    enum Format: Hashable { case bold, italic, underline, bullets, numbers }
+    @Published private(set) var formats: Set<Format> = []
+    @Published private(set) var block: LessonStyle.Block = .body
+
     weak var undoManager: UndoManager?
     private weak var textView: PageTextView?
     private var storage: NSTextStorage?
     private var task: Task<Void, Never>?
+    /// Qui rédige la leçon en cours (étiquette des ajouts, capsule d'état).
+    @Published private(set) var author = "Claude"
 
     var isWorking: Bool { phase != .idle }
     var isRecording: Bool { recording != .off }
@@ -42,36 +49,30 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
 
     func undoManager(for view: NSTextView) -> UndoManager? { undoManager }
 
-    nonisolated func textStorage(_ textStorage: NSTextStorage, willProcessEditing editedMask: NSTextStorageEditActions,
-                                 range editedRange: NSRange, changeInLength delta: Int) {
-        LessonStyle.normalizeSpacing(textStorage, around: editedRange)
-        guard editedMask.contains(.editedCharacters) else { return }
-        MainActor.assumeIsolated { userEdited(editedRange, delta: delta) }
-    }
+    func textViewDidChangeSelection(_ notification: Notification) { refreshFormats() }
+    func textDidChange(_ notification: Notification) { refreshFormats() }
 
-    /// Pendant l'enregistrement, ce que tu tapes avant la transcription la décale.
-    private func userEdited(_ range: NSRange, delta: Int) {
-        guard case .on = recording, !writingTranscript, let storage else { return }
-        if range.location < transcriptEnd { transcriptEnd = max(range.location, transcriptEnd + delta) }
-        transcriptEnd = min(transcriptEnd, storage.length - volatileLength)
-    }
-
-    /// Retour sur un paragraphe vide au bout d'un ajout de Claude : on sort du contour (comme pour une liste).
-    func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
-        guard text == "\n", range.length == 0, let storage else { return true }
-        let ns = storage.string as NSString
-        let paragraph = ns.paragraphRange(for: range)
-        guard ns.substring(with: paragraph).trimmingCharacters(in: .newlines).isEmpty else { return true }
-        let inside = paragraph.length > 0
-            ? storage.attribute(.ezAddition, at: paragraph.location, effectiveRange: nil) != nil
-            : textView.typingAttributes[.ezAddition] != nil
-        guard inside else { return true }
-        if paragraph.length > 0, textView.shouldChangeText(in: paragraph, replacementString: nil) {
-            storage.removeAttribute(.ezAddition, range: paragraph)
-            textView.didChangeText()
+    func refreshFormats() {
+        guard let textView, let storage else { return }
+        let selection = textView.selectedRange()
+        let attributes = selection.length == 0 || selection.location >= storage.length
+            ? textView.typingAttributes : storage.attributes(at: selection.location, effectiveRange: nil)
+        let font = attributes[.font] as? NSFont
+        let traits = font.map { NSFontManager.shared.traits(of: $0) } ?? []
+        var found: Set<Format> = []
+        if traits.contains(.boldFontMask) { found.insert(.bold) }
+        if traits.contains(.italicFontMask) { found.insert(.italic) }
+        if (attributes[.underlineStyle] as? Int ?? 0) != 0 { found.insert(.underline) }
+        switch (attributes[.paragraphStyle] as? NSParagraphStyle)?.textLists.first?.markerFormat {
+        case .some(.disc): found.insert(.bullets)
+        case .some(LessonStyle.numbered), .some(.decimal): found.insert(.numbers)
+        default: break
         }
-        textView.typingAttributes.removeValue(forKey: .ezAddition)
-        return false
+        let current = LessonStyle.Block.of(font)
+        // Un titre est gras par nature : on n'allume pas « Gras » pour autant.
+        if current != .body { found.remove(.bold) }
+        if found != formats { formats = found }
+        if current != block { block = current }
     }
 
     // MARK: Mise en forme
@@ -89,6 +90,7 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
         if range.length == 0 {
             let font = textView.typingAttributes[.font] as? NSFont ?? LessonStyle.bodyFont
             textView.typingAttributes[.font] = convert(font, add: !fm.traits(of: font).contains(trait))
+            refreshFormats()
             return
         }
         let firstFont = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont ?? LessonStyle.bodyFont
@@ -108,6 +110,7 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
         if range.length == 0 {
             let on = (textView.typingAttributes[.underlineStyle] as? Int ?? 0) != 0
             textView.typingAttributes[.underlineStyle] = on ? 0 : NSUnderlineStyle.single.rawValue
+            refreshFormats()
             return
         }
         let on = (storage.attribute(.underlineStyle, at: range.location, effectiveRange: nil) as? Int ?? 0) != 0
@@ -142,6 +145,7 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
         }
         textView.typingAttributes[.font] = font(from: textView.typingAttributes[.font] as? NSFont)
         textView.typingAttributes[.paragraphStyle] = LessonStyle.paragraph(block)
+        refreshFormats()
     }
 
     /// Liste à puces ou numérotée sur les paragraphes sélectionnés (un second appel l'enlève).
@@ -189,6 +193,7 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
         if result.length > 0, let style = result.attribute(.paragraphStyle, at: result.length - 1, effectiveRange: nil) {
             textView.typingAttributes[.paragraphStyle] = style
         }
+        refreshFormats()
     }
 
     // MARK: EZifier
@@ -208,6 +213,7 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
         }
 
         let original = NSAttributedString(attributedString: storage)
+        author = connection == .local ? LocalModelClient.displayName : "Claude"
         textView.breakUndoCoalescing()
         textView.isEditable = false
         phase = .reading
@@ -217,9 +223,12 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
             var markdown = ""
             var lastRender = ContinuousClock.now
             do {
-                let events = connection == .subscription
-                    ? ClaudeCodeClient().lesson(from: notes, context: context, webSearch: webSearch)
-                    : ClaudeClient(apiKey: apiKey).lesson(from: notes, context: context, webSearch: webSearch)
+                let events: AsyncThrowingStream<ClaudeClient.Event, Error>
+                switch connection {
+                case .subscription: events = ClaudeCodeClient().lesson(from: notes, context: context, webSearch: webSearch)
+                case .apiKey: events = ClaudeClient(apiKey: apiKey).lesson(from: notes, context: context, webSearch: webSearch)
+                case .local: events = LocalModelClient().lesson(from: notes, context: context)
+                }
                 for try await event in events {
                     guard let self else { return }
                     switch event {
@@ -253,7 +262,7 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
     }
 
     private func show(_ markdown: String) {
-        replaceAll(with: LessonRenderer.render(markdown))
+        replaceAll(with: LessonRenderer.render(markdown, author: author))
         textView?.scrollRangeToVisible(NSRange(location: storage?.length ?? 0, length: 0))
     }
 

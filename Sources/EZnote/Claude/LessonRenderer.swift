@@ -5,21 +5,32 @@ import AppKit
 enum LessonRenderer {
     private static let numbered = try! NSRegularExpression(pattern: "^(\\d+)[.)]\\s+")
 
-    static func render(_ markdown: String) -> NSAttributedString {
+    static func render(_ markdown: String, author: String = "Claude") -> NSAttributedString {
         let out = NSMutableAttributedString()
         var addition: ClaudeAddition?
         let bullets = NSTextList(markerFormat: .disc, options: 0)
         var numbers = NSTextList(markerFormat: LessonStyle.numbered, options: 0)
         var lastWasNumbered = false
 
-        for raw in markdown.components(separatedBy: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
+        var lines = markdown.components(separatedBy: "\n")[...]
+        while let raw = lines.popFirst() {
+            // Les petits modèles locaux écrivent parfois « #### :::claude Exemple Texte… » ou des formules « $CO_2$ ».
+            var line = raw.trimmingCharacters(in: .whitespaces)
+                .replacingOccurrences(of: #"\$([^$\n]+)\$"#, with: "$1", options: .regularExpression)
+            if line.hasPrefix("#"), let marker = line.range(of: ":::") { line = String(line[marker.lowerBound...]) }
 
             if line.hasPrefix(":::") {
                 let rest = line.dropFirst(3).trimmingCharacters(in: .whitespaces)
                 if rest.lowercased().hasPrefix("claude") {
-                    let kind = rest.dropFirst(6).trimmingCharacters(in: .whitespaces)
-                    addition = ClaudeAddition(kind: kind.isEmpty ? "Précision" : kind.prefix(1).uppercased() + kind.dropFirst())
+                    let words = rest.dropFirst(6).trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
+                    let first = words.first.map(String.init) ?? ""
+                    let known = ["précision", "définition", "exemple", "explication", "attention"]
+                        .contains(first.lowercased().trimmingCharacters(in: .punctuationCharacters))
+                    let kind = known ? first.trimmingCharacters(in: .punctuationCharacters) : "Précision"
+                    addition = ClaudeAddition(kind: kind.prefix(1).uppercased() + kind.dropFirst(), author: author)
+                    // Texte sur la même ligne que le marqueur : premier paragraphe de l'ajout.
+                    let content = known ? (words.count > 1 ? String(words[1]) : "") : words.joined(separator: " ")
+                    if !content.isEmpty { lines.insert(content, at: lines.startIndex) }
                 } else {
                     addition = nil
                 }
@@ -32,7 +43,8 @@ enum LessonRenderer {
             var list: NSTextList?
             var number = 1
 
-            if line.hasPrefix("### ") { block = .subheading; text = text.dropFirst(4) }
+            if line.hasPrefix("#### ") { block = .subheading; text = text.dropFirst(5) }
+            else if line.hasPrefix("### ") { block = .subheading; text = text.dropFirst(4) }
             else if line.hasPrefix("## ") { block = .heading; text = text.dropFirst(3) }
             else if line.hasPrefix("# ") { block = .title; text = text.dropFirst(2) }
             else if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ") { list = bullets; text = text.dropFirst(2) }

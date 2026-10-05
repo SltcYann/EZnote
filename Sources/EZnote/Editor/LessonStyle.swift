@@ -10,7 +10,12 @@ extension NSAttributedString.Key {
 /// Un ajout de Claude. Chaque bloc a sa propre instance : deux blocs voisins restent distincts.
 final class ClaudeAddition: NSObject {
     let kind: String
-    init(kind: String) { self.kind = kind }
+    /// Qui a écrit l'ajout : « Claude », ou le modèle local (« Qwen3.5 »).
+    let author: String
+    init(kind: String, author: String = "Claude") {
+        self.kind = kind
+        self.author = author
+    }
 }
 
 /// Typographie et mise en page du document.

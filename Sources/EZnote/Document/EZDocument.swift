@@ -46,6 +46,7 @@ enum NoteFile {
         var location: Int
         var length: Int
         var kind: String
+        var author: String?
     }
 
     static func read(_ data: Data, type: UTType) throws -> NSAttributedString {
@@ -57,7 +58,7 @@ enum NoteFile {
                 text.addAttribute(.ezTranscript, value: true, range: NSRange(location: span.location, length: span.length))
             }
             for span in payload.additions where span.location >= 0 && span.location + span.length <= text.length {
-                text.addAttribute(.ezAddition, value: ClaudeAddition(kind: span.kind),
+                text.addAttribute(.ezAddition, value: ClaudeAddition(kind: span.kind, author: span.author ?? "Claude"),
                                   range: NSRange(location: span.location, length: span.length))
             }
         } else if type.conforms(to: .rtf) {
@@ -85,7 +86,7 @@ enum NoteFile {
         var spans: [Span] = []
         text.enumerateAttribute(.ezAddition, in: all) { value, range, _ in
             if let addition = value as? ClaudeAddition {
-                spans.append(Span(location: range.location, length: range.length, kind: addition.kind))
+                spans.append(Span(location: range.location, length: range.length, kind: addition.kind, author: addition.author))
             }
         }
         var transcripts: [Span] = []

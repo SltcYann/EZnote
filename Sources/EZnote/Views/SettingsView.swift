@@ -9,7 +9,7 @@ struct SettingsView: View {
             StudiesSettings()
                 .tabItem { Label("Mes études", systemImage: "graduationcap") }
             DocumentsSettings()
-                .tabItem { Label("Documents", systemImage: "folder") }
+                .tabItem { Label("Général", systemImage: "gearshape") }
         }
         .frame(width: 460)
     }
@@ -37,9 +37,21 @@ private struct StudiesSettings: View {
 
 private struct DocumentsSettings: View {
     @AppStorage(SaveFolder.defaultsKey) private var folder = ""
+    @AppStorage(AppAppearance.defaultsKey) private var appearance = AppAppearance.system.rawValue
 
     var body: some View {
         VStack(spacing: UY.space18) {
+            Text("Apparence").font(UY.headline)
+            Picker("", selection: $appearance) {
+                ForEach(AppAppearance.allCases, id: \.self) { Text($0.label).tag($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 260)
+            .onChange(of: appearance) { _, value in AppAppearance.apply(value) }
+
+            Divider().padding(.horizontal, UY.space32)
+
             UYSymbol(name: "folder.fill", size: 26).foregroundStyle(UY.claude)
             Text("Dossier de sauvegarde par défaut")
                 .font(UY.headline)
@@ -77,20 +89,22 @@ private struct ClaudeSettings: View {
             Picker("", selection: $connection) {
                 Text("Abonnement Claude").tag(ClaudeConnection.subscription.rawValue)
                 Text("Clé API").tag(ClaudeConnection.apiKey.rawValue)
+                Text("Modèle local").tag(ClaudeConnection.local.rawValue)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 300)
+            .frame(width: 380)
 
-            if connection == ClaudeConnection.subscription.rawValue {
-                subscription
-            } else {
-                apiKey
+            switch ClaudeConnection(rawValue: connection) ?? .subscription {
+            case .subscription: subscription
+            case .apiKey: apiKey
+            case .local: LocalModelSettings()
             }
 
             Toggle("Autoriser Claude à chercher sur le web", isOn: $webSearch)
                 .toggleStyle(.switch)
                 .font(UY.subheadline)
+                .disabled(connection == ClaudeConnection.local.rawValue)
         }
         .padding(UY.space32)
         .animation(UY.ease(0.25), value: connection)
@@ -168,5 +182,51 @@ struct APIKeySheet: View {
         }
         .padding(UY.space32)
         .frame(width: 400)
+    }
+}
+
+/// Modèle local (Ollama, LM Studio) : adresse du serveur et choix du modèle installé.
+private struct LocalModelSettings: View {
+    @AppStorage("localServer") private var server = LocalModelClient.defaultServer
+    @AppStorage("localModel") private var model = ""
+    @State private var models: [String] = []
+    @State private var loading = false
+
+    var body: some View {
+        VStack(spacing: UY.space12) {
+            Text("La leçon est rédigée sur ton Mac par un modèle comme Qwen, sans internet. Plus lent et moins précis que Claude, et sans recherche web : les ajouts s'appuient seulement sur ce que le modèle sait.")
+                .font(UY.footnote)
+                .foregroundStyle(UY.inkSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            GlassField(placeholder: "Adresse (Ollama : \(LocalModelClient.defaultServer))", text: $server)
+            HStack(spacing: UY.space12) {
+                Picker("Modèle", selection: $model) {
+                    if model.isEmpty { Text("Choisir…").tag("") }
+                    ForEach(models.contains(model) || model.isEmpty ? models : [model] + models, id: \.self) { Text($0).tag($0) }
+                }
+                .frame(width: 240)
+                Button { Task { await reload() } } label: {
+                    UYSymbol(name: "arrow.clockwise", size: 13)
+                }
+                .buttonStyle(.glass)
+                .help("Recharger la liste des modèles")
+                .disabled(loading)
+            }
+            if models.isEmpty && !loading {
+                Text("Aucun modèle trouvé. Lance Ollama (ou LM Studio) puis recharge.")
+                    .font(UY.caption)
+                    .foregroundStyle(UY.inkTertiary)
+            }
+        }
+        .task { await reload() }
+        .onChange(of: server) { _, _ in Task { await reload() } }
+    }
+
+    private func reload() async {
+        loading = true
+        models = await LocalModelClient.installedModels()
+        if model.isEmpty, let first = models.first { model = first }
+        loading = false
     }
 }

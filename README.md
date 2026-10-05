@@ -24,10 +24,11 @@ Ensuite, **EZifier** en fait une leçon : Claude enlève les hésitations et, qu
 ## Éditeur
 
 - Moteur de texte natif d'Apple (TextKit, comme TextEdit et Pages) : fluide même sur de longs documents.
-- Styles Titre, Section, Sous-section, Texte ; gras, italique, souligné ; listes à puces et numérotées.
+- Styles Titre, Section, Sous-section, Texte ; gras, italique, souligné ; listes à puces et numérotées. Les boutons s'allument en orange quand le format est actif à l'endroit du curseur.
+- Un nouveau document porte la date du jour (« 5 octobre 2026 »), proposée comme nom à l'enregistrement.
 - Polices et couleurs (menu Format), correcteur orthographique, recherche (⌘F), annulation illimitée.
 - Format `.eznote` (garde les ajouts de Claude) ; ouvre aussi le RTF et le texte brut, enregistre en RTF.
-- Mode clair et sombre.
+- Mode clair, sombre ou comme le système (Réglages › Général).
 
 ## Compiler
 
@@ -39,9 +40,13 @@ Le script compile, crée `build/EZnote.app`, la signe et l'installe dans `/Appli
 
 ## Réglages (⌘,)
 
-- **Claude** : *Abonnement Claude* (par défaut) passe par Claude Code, installé et connecté à ton compte claude.ai : pas de clé API, l'EZification compte dans les limites de ton abonnement. *Clé API* utilise une clé Anthropic ([en créer une](https://platform.claude.com/settings/keys)), rangée dans le trousseau. On peut aussi couper la recherche web.
+- **Claude** :
+  - *Abonnement Claude* (par défaut) passe par Claude Code, installé et connecté à ton compte claude.ai : pas de clé API, l'EZification compte dans les limites de ton abonnement.
+  - *Clé API* utilise une clé Anthropic ([en créer une](https://platform.claude.com/settings/keys)), rangée dans le trousseau.
+  - *Modèle local* fait rédiger la leçon sur ton Mac par un modèle comme Qwen, via [Ollama](https://ollama.com) (lancé automatiquement) ou LM Studio : sans internet, mais plus lent, moins précis et sans recherche web. Les ajouts portent alors le nom du modèle.
+  - On peut aussi couper la recherche web.
 - **Mes études** : ton niveau et tes études, pour aider Claude à comprendre tes notes.
-- **Documents** : le dossier de sauvegarde proposé par défaut.
+- **Général** : apparence (système, clair, sombre) et dossier de sauvegarde proposé par défaut.
 
 > Sans certificat de signature local, l'app est signée en ad hoc : macOS peut redemander l'accès au trousseau après une recompilation. Pour l'éviter, crée un certificat « EZnote » (Trousseaux d'accès › Assistant de certification › Créer un certificat, type « Signature de code »).
 
@@ -50,7 +55,7 @@ Modèle utilisé : Claude Opus 5.5 (`claude-opus-5-5`), en streaming, avec la re
 ## Prérequis
 
 - macOS 26 ou plus récent (Liquid Glass).
-- Un abonnement Claude avec Claude Code installé et connecté, ou une clé API Anthropic.
+- Un abonnement Claude avec Claude Code installé et connecté, une clé API Anthropic, ou un modèle local (Ollama, LM Studio).
 
 ## Structure
 
@@ -66,6 +71,7 @@ Sources/EZnote/
 ├── Claude/
 │   ├── ClaudeClient.swift     API Messages en streaming (SSE), recherche web
 │   ├── ClaudeCodeClient.swift abonnement Claude via Claude Code
+│   ├── LocalModelClient.swift modèle local (Ollama, LM Studio)
 │   ├── LessonPrompt.swift     consignes d'EZifier
 │   ├── LessonRenderer.swift   Markdown de Claude → texte mis en forme (et l'inverse)
 │   └── Keychain.swift

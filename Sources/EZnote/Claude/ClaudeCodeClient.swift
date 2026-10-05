@@ -108,9 +108,10 @@ struct ClaudeCodeClient {
     }
 }
 
-/// Comment EZnote parle à Claude : avec l'abonnement (via Claude Code) ou avec une clé API.
+/// Qui rédige la leçon : Claude avec l'abonnement (via Claude Code), Claude avec une clé API,
+/// ou un modèle local (Ollama, LM Studio).
 enum ClaudeConnection: String {
-    case subscription, apiKey
+    case subscription, apiKey, local
 
     static let defaultsKey = "connection"
 
