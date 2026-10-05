@@ -193,7 +193,10 @@ enum NotesExporter {
             let paragraphText = ns.substring(with: content)
             if let marker = LessonStyle.markerRange(in: paragraphText) {
                 let symbol = (paragraphText as NSString).substring(with: marker).trimmingCharacters(in: .whitespaces)
-                prefix = symbol.first?.isNumber == true ? symbol + " " : "- "
+                // Sous-liste : deux espaces par niveau (retrait de 22 pt par niveau au-delà de 30).
+                let headIndent = (text.attribute(.paragraphStyle, at: content.location, effectiveRange: nil) as? NSParagraphStyle)?.headIndent ?? 30
+                let level = max(0, Int(((headIndent - 30) / 22).rounded()))
+                prefix = String(repeating: "  ", count: level) + (symbol.first?.isNumber == true ? symbol + " " : "- ")
                 content = NSRange(location: content.location + marker.length, length: content.length - marker.length)
             }
             let block = content.length > 0

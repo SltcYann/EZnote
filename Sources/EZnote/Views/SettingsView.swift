@@ -229,8 +229,11 @@ private struct LocalModelSettings: View {
                 .help("Recharger la liste des modèles")
                 .disabled(loading)
             }
-            if models.isEmpty && !loading {
-                Text("Aucun modèle trouvé. Lance Ollama (ou LM Studio) puis recharge.")
+            if loading {
+                ProgressView().controlSize(.small)
+            } else if models.isEmpty {
+                Text("Aucun modèle trouvé. Installe Ollama (ollama.com) et un modèle, par exemple « ollama pull qwen3 », puis recharge.")
+                    .multilineTextAlignment(.center)
                     .font(UY.caption)
                     .foregroundStyle(UY.inkTertiary)
             }
@@ -241,6 +244,8 @@ private struct LocalModelSettings: View {
 
     private func reload() async {
         loading = true
+        // Ollama installé mais fermé : on le lance pour pouvoir lister ses modèles.
+        try? await LocalModelClient.ensureRunning()
         models = await LocalModelClient.installedModels()
         if model.isEmpty, let first = models.first { model = first }
         loading = false

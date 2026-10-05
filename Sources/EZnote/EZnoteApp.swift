@@ -15,6 +15,8 @@ struct EZnoteApp: App {
         DocumentGroup(newDocument: { EZDocument() }) { file in
             ContentView(document: file.document, fileURL: file.fileURL)
         }
+        // Assez large pour que la barre d'outils laisse le titre en entier (« 5 octobre 2026 (2) »).
+        .defaultSize(width: 1120, height: 780)
         .commands {
             EZnoteCommands()
         }

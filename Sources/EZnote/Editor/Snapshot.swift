@@ -153,6 +153,7 @@ enum Snapshot {
                           "| images", attachments, "| marques", marks, "| audio", audio, "| ajouts", additions,
                           "| infos", backInfo == info)
                     let exported = NotesExporter.export(back)
+                    print("sous-listes :", exported.markdown.split(separator: "\n").filter { $0.contains("sous") })
                     print("notes pour l'IA :", exported.markdown.replacingOccurrences(of: "\n", with: " ⏎ ").suffix(160), "| images jointes", exported.images.count)
                     try Exporter.pdf(back, to: folder.appendingPathComponent("test.pdf"))
                     try Exporter.word(back).write(to: folder.appendingPathComponent("test.docx"))

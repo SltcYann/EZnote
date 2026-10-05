@@ -14,7 +14,7 @@ struct LocalModelClient {
             case .unreachable(let url):
                 return "Aucun modèle local ne répond à \(url). Lance Ollama ou LM Studio, ou vérifie l'adresse dans les Réglages."
             case .noModel:
-                return "Choisis un modèle local dans Réglages › Claude › Modèle local."
+                return "Aucun modèle local n'est installé. Installe-en un avec Ollama (par exemple « ollama pull qwen3 »), ou choisis Claude dans les Réglages."
             case .http(let code, let message):
                 return "Le modèle local a renvoyé une erreur \(code) : \(message)"
             }
@@ -48,9 +48,14 @@ struct LocalModelClient {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let model = Self.model
-                    guard !model.isEmpty else { throw Failure.noModel }
                     try await Self.ensureRunning()
+                    // Aucun modèle choisi : on prend le premier installé, et on le retient.
+                    var model = Self.model
+                    if model.isEmpty, let first = await Self.installedModels().first {
+                        model = first
+                        UserDefaults.standard.set(first, forKey: "localModel")
+                    }
+                    guard !model.isEmpty else { throw Failure.noModel }
                     var urlRequest = URLRequest(url: URL(string: Self.server + "/chat/completions")!)
                     urlRequest.httpMethod = "POST"
                     urlRequest.timeoutInterval = 900
@@ -109,7 +114,7 @@ struct LocalModelClient {
     }
 
     /// Si Ollama est installé mais fermé, on le lance et on attend qu'il réponde (10 s au plus).
-    private static func ensureRunning() async throws {
+    static func ensureRunning() async throws {
         guard let url = URL(string: server + "/models") else { throw Failure.unreachable(server) }
         func reachable() async -> Bool { (try? await URLSession.shared.data(from: url)) != nil }
         if await reachable() { return }
