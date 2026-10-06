@@ -9,6 +9,7 @@ struct EZnoteApp: App {
         #endif
         SaveFolder.apply()
         DateNames.install()
+        DispatchQueue.global(qos: .utility).async { ReviewReminders.reschedule() }
     }
 
     var body: some Scene {
@@ -24,6 +25,7 @@ struct EZnoteApp: App {
         Window("Bibliothèque", id: "library") {
             LibraryView()
         }
+        .defaultSize(width: 960, height: 680)
         .keyboardShortcut("l", modifiers: [.command, .shift])
 
         Settings {
@@ -96,7 +98,7 @@ struct EZnoteCommands: Commands {
 
         CommandMenu("Insertion") {
             Group {
-                Button("Image…") { editor?.insertImage() }
+                Button("Image ou PDF de diapos…") { editor?.insertImage() }
                     .keyboardShortcut("i", modifiers: [.command, .option])
                 Divider()
                 Button("Marquer comme important") { editor?.insertMark(.important) }

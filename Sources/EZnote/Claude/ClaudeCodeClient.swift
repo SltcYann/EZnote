@@ -113,15 +113,3 @@ struct ClaudeCodeClient {
         }
     }
 }
-
-/// Qui rédige la leçon : Claude avec l'abonnement (via Claude Code), Claude avec une clé API,
-/// ou un modèle local (Ollama, LM Studio).
-enum ClaudeConnection: String {
-    case subscription, apiKey, local
-
-    static let defaultsKey = "connection"
-
-    static var current: ClaudeConnection {
-        UserDefaults.standard.string(forKey: defaultsKey).flatMap(ClaudeConnection.init) ?? .subscription
-    }
-}

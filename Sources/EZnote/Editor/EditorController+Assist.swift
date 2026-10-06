@@ -55,4 +55,28 @@ extension EditorController {
         textView.didChangeText()
         textView.scrollRangeToVisible(NSRange(location: storage.length, length: 0))
     }
+
+    /// Sélectionne et montre le paragraphe du cours qui parle le plus de `query` (mots en commun).
+    func reveal(matching query: String) {
+        guard let textView, let storage else { return }
+        func words(_ text: String) -> Set<String> {
+            Set(text.lowercased().folding(options: .diacriticInsensitive, locale: nil)
+                .components(separatedBy: CharacterSet.alphanumerics.inverted).filter { $0.count >= 4 })
+        }
+        let wanted = words(query)
+        let ns = storage.string as NSString
+        var best = NSRange(location: 0, length: 0), bestScore = 0
+        var location = 0
+        while location < ns.length {
+            let paragraph = ns.paragraphRange(for: NSRange(location: location, length: 0))
+            location = NSMaxRange(paragraph)
+            let score = words(ns.substring(with: paragraph)).intersection(wanted).count
+            if score > bestScore { bestScore = score; best = paragraph }
+        }
+        guard bestScore > 0 else { errorMessage = "Ce passage n'a pas été trouvé dans le cours."; return }
+        textView.window?.makeFirstResponder(textView)
+        textView.setSelectedRange(best)
+        textView.scrollRangeToVisible(best)
+        textView.showFindIndicator(for: best)
+    }
 }

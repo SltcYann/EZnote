@@ -44,9 +44,33 @@ enum LessonPrompt {
     l'élève n'a pas compris — ajoute juste après un bloc « Explication » particulièrement clair, avec un exemple. \
     Ne recopie pas les marqueurs eux-mêmes.
 
-    Images : [Image 1], [Image 2]… sont des photos du tableau, des diapositives ou des schémas, jointes au \
-    message dans cet ordre. Intègre leur contenu à la leçon comme s'il s'agissait de notes, et recopie le \
-    marqueur « [Image n] » seul sur sa ligne, là où l'image doit apparaître dans la leçon.
+    Images : [Image n] est une photo du tableau, d'une diapositive ou d'un schéma ; [Diapos n : « fichier », \
+    k pages] est le PDF des diapositives du professeur, dont les k pages sont jointes comme images. Toutes les \
+    images sont jointes au message dans l'ordre des marqueurs. Intègre leur contenu à la leçon comme s'il \
+    s'agissait de notes : croise les diapositives avec les notes et la transcription, et indique d'où vient \
+    une information entre parenthèses, par exemple « (diapo 4) ». Recopie le marqueur « [Image n] » ou \
+    « [Diapos n] » seul sur sa ligne, là où l'image ou le PDF doit apparaître dans la leçon.
+
+    Schémas : quand le cours s'y prête vraiment, ajoute un schéma (au plus trois par leçon), placé après le \
+    passage concerné, hors des blocs Claude. Trois types, écrits ainsi :
+
+    :::schema frise Titre de la frise
+    1789 | Prise de la Bastille
+    1792 | Proclamation de la République
+    :::
+
+    :::schema tableau Titre du tableau
+    | | Colonne A | Colonne B |
+    | Critère 1 | … | … |
+    :::
+
+    :::schema carte Notion centrale
+    - Branche 1
+      - détail
+    - Branche 2
+    :::
+
+    Frise pour une chronologie, tableau pour comparer, carte pour une notion à plusieurs aspects. Textes courts.
 
     Les blocs « :::claude » déjà présents dans les notes sont tes ajouts d'une version précédente : garde-les \
     (tu peux les améliorer), toujours dans des blocs Claude.
@@ -94,6 +118,58 @@ enum AssistPrompt {
     Réponds uniquement avec un tableau JSON, sans texte autour : \
     [{"question": "…", "choices": ["…", "…", "…", "…"], "answer": 0, "explanation": "…"}, …] \
     où « answer » est l'indice (à partir de 0) de la bonne proposition.
+    """
+
+    static let outline = """
+    Tu suis un cours en direct grâce à sa transcription automatique (avec des erreurs de reconnaissance). \
+    Donne le plan du cours tel qu'il se dessine : les grandes parties abordées jusqu'ici, dans l'ordre, \
+    entre 2 et 8 titres courts (6 mots au plus), sans numéro.
+
+    Réponds uniquement avec un tableau JSON de chaînes, sans texte autour : ["…", "…"]
+    """
+
+    static let oralGrade = """
+    Tu fais passer un oral blanc à un élève. Tu reçois la question, la réponse attendue et la réponse de \
+    l'élève (transcrite automatiquement depuis l'oral : ignore les fautes de transcription et les hésitations). \
+    Note la réponse sur 10 selon l'exactitude et la complétude par rapport à la réponse attendue, au niveau de \
+    l'élève. Puis donne un retour bref et bienveillant, en deux ou trois phrases : ce qui est juste, ce qui \
+    manque ou est faux. Si l'élève n'a rien dit d'utile, la note est 0.
+
+    \(SharedPrompt.context)
+
+    Réponds uniquement avec un objet JSON, sans texte autour : {"note": 7, "retour": "…"}
+    """
+
+    static func oralMessage(question: String, expected: String, answer: String, context: StudyContext) -> String {
+        """
+        \(context.promptBlock)Question : \(question)
+        Réponse attendue : \(expected)
+        Réponse de l'élève : \(answer.isEmpty ? "(rien)" : answer)
+        """
+    }
+
+    static let librarySearch = """
+    Tu aides un élève à retrouver une information dans ses cours. Tu reçois ses cours entre balises <cours> \
+    (titre et matière en attributs) puis sa question. Trouve les passages qui y répondent ou en parlent \
+    (5 au plus, les plus pertinents d'abord). Pour chacun : le titre exact du cours, une citation courte et \
+    exacte du passage (une ou deux phrases recopiées du cours), et une phrase qui explique en quoi il répond.
+
+    Réponds uniquement avec un tableau JSON, sans texte autour : \
+    [{"cours": "titre exact", "passage": "…", "explication": "…"}] — tableau vide s'il n'y a rien.
+    """
+
+    static let merge = """
+    Tu fusionnes plusieurs cours d'un élève (entre balises <cours>, du plus ancien au plus récent) en un seul \
+    chapitre bien structuré. Garde toutes les informations, mais une seule fois : fusionne les répétitions, \
+    ordonne logiquement (ou chronologiquement), et ajoute des titres de sections clairs. Le texte reste tiré \
+    des cours ; les blocs « :::claude Type … ::: » existants restent des blocs Claude (tu peux les regrouper), \
+    et n'ajoute pas d'information nouvelle hors de ces blocs. Les schémas « :::schema … ::: » peuvent être \
+    repris tels quels.
+
+    \(SharedPrompt.context)
+
+    Format : le même Markdown simple que les cours (titre « # », sections « ## » et « ### », listes, **gras**, \
+    blocs « :::claude » et « :::schema »). Réponds uniquement avec le chapitre.
     """
 
     static let summary = """

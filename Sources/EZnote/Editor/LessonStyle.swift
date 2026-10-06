@@ -218,6 +218,14 @@ enum LessonStyle {
             // Toujours recalculé : à la relecture d'un fichier, la taille enregistrée n'est pas fiable.
             let scale = min(1, width / image.size.width, 520 / image.size.height)
             let bounds = CGRect(x: 0, y: 0, width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
+            // L'interligne (1,28) multiplierait la hauteur de l'image : grand vide au-dessus. Interligne simple ici.
+            let paragraph = (storage.string as NSString).paragraphRange(for: run)
+            if let style = storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle,
+               style.lineHeightMultiple != 1 {
+                let single = style.mutableCopy() as! NSMutableParagraphStyle
+                single.lineHeightMultiple = 1
+                storage.addAttribute(.paragraphStyle, value: single, range: paragraph)
+            }
             guard attachment.bounds != bounds || attachment.image?.size != bounds.size else { return }
             attachment.bounds = bounds
             // À la relecture d'un RTFD, l'image est dessinée par une cellule qui ignore `bounds` :

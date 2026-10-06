@@ -1,8 +1,14 @@
 #if DEBUG
 import AppKit
 
-/// Outil de développement : `EZnote --snapshot fichier.png [dark]` rend une leçon d'exemple dans l'éditeur
-/// et l'enregistre en image, sans ouvrir de fenêtre.
+/// Outils de développement (version Debug seulement), lancés en ligne de commande :
+/// - `--snapshot fichier.png [dark]` : rend une leçon d'exemple dans l'éditeur, en image ;
+/// - `--file-test dossier` : aller-retour du format .eznote, export PDF et Word ;
+/// - `--math-test` : conversion des formules ;
+/// - `--ai-test [lesson|cards|quiz|summary]` : interroge l'IA réglée ;
+/// - `--record-test` : enregistrement réel au micro, marque-page et réécoute ;
+/// - `--write-samples dossier` : écrit des cours d'exemple pour la bibliothèque.
+@MainActor
 enum Snapshot {
     static let sample = """
     # La photosynthèse
@@ -23,25 +29,31 @@ enum Snapshot {
     2. second point
     :::
     La réaction a lieu dans les chloroplastes.
+    :::schema frise Les grandes étapes
+    1771 | Priestley montre qu'une plante « restaure » l'air
+    1779 | Ingenhousz : il faut de la lumière
+    1960 | Calvin décrit le cycle qui fixe le CO₂
+    :::
+    :::schema tableau Photosynthèse et respiration
+    | | Photosynthèse | Respiration |
+    | Lieu | Chloroplaste | Mitochondrie |
+    | Consomme | CO₂ et eau | O₂ et glucose |
+    :::
+    :::schema carte La photosynthèse
+    - Ingrédients
+      - eau
+      - CO₂
+      - lumière
+    - Lieu
+      - chloroplastes
+    - Produits
+      - glucose
+      - O₂
+    :::
     """
 
     static func runIfRequested() {
         let args = CommandLine.arguments
-        if args.contains("--menu-dump") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                func walk(_ menu: NSMenu, _ path: String) {
-                    for item in menu.items {
-                        if path.contains("Format") || item.keyEquivalent.lowercased() == "b" {
-                            let line = "\(path) › \(item.title) [\(item.keyEquivalent)] \(item.keyEquivalentModifierMask.rawValue) \(item.action.map(NSStringFromSelector) ?? "-")\n"
-                            FileHandle.standardError.write(Data(line.utf8))
-                        }
-                        if let sub = item.submenu { walk(sub, path + " › " + item.title) }
-                    }
-                }
-                if let main = NSApp.mainMenu { walk(main, "") }
-                exit(0)
-            }
-        }
         if let i = args.firstIndex(of: "--ai-test") {
             // `EZnote --ai-test [lesson|cards|quiz|summary]` : interroge l'IA réglée sur des notes d'exemple.
             let mode = i + 1 < args.count ? args[i + 1] : "lesson"
@@ -110,28 +122,6 @@ enum Snapshot {
                     try? FileManager.default.removeItem(at: url)
                     print("fichier audio de test supprimé")
                 }
-                exit(0)
-            }
-            RunLoop.main.run()
-        }
-        if args.contains("--bold-test") {
-            Task { @MainActor in
-                let document = EZDocument()
-                document.storage.setAttributedString(NSAttributedString(string: "Révolution française\nCauses : crise", attributes: LessonStyle.attributes(.body)))
-                let layoutManager = ClaudeLayoutManager()
-                document.storage.addLayoutManager(layoutManager)
-                let container = NSTextContainer(size: NSSize(width: 600, height: 1000))
-                layoutManager.addTextContainer(container)
-                let view = PageTextView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), textContainer: container)
-                view.allowsUndo = true
-                let editor = EditorController()
-                editor.attach(textView: view, storage: document.storage, document: document)
-                view.setSelectedRange(NSRange(location: 0, length: 21))
-                editor.toggleItalic()
-                let before = (document.storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.fontName ?? "-"
-                editor.toggleBold()
-                let after = (document.storage.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.fontName ?? "-"
-                print("avant", before, "après", after, "formats", editor.formats)
                 exit(0)
             }
             RunLoop.main.run()
@@ -250,7 +240,7 @@ enum Snapshot {
         container.widthTracksTextView = false
         container.lineFragmentPadding = 0
         layoutManager.addTextContainer(container)
-        let view = PageTextView(frame: NSRect(x: 0, y: 0, width: 960, height: 1100), textContainer: container)
+        let view = PageTextView(frame: NSRect(x: 0, y: 0, width: 960, height: 2600), textContainer: container)
         view.drawsBackground = false
         view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         view.layoutColumn()

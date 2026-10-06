@@ -9,7 +9,7 @@ extension EditorController {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image, .pdf]
         panel.allowsMultipleSelection = true
-        panel.message = "Photos du tableau, diapositives ou schémas"
+        panel.message = "Photos du tableau, schémas, ou PDF des diapositives du cours"
         panel.prompt = "Insérer"
         guard panel.runModal() == .OK else { return }
         let pictures = NSMutableAttributedString()
@@ -18,6 +18,14 @@ extension EditorController {
             let attachment = NSTextAttachment(fileWrapper: wrapper)
             pictures.append(NSAttributedString(attachment: attachment))
             pictures.append(NSAttributedString(string: "\n", attributes: LessonStyle.attributes(.body)))
+            // PDF de diapositives : légende avec le nom et le nombre de pages (seule la première est affichée).
+            if let pages = Slides.pages(of: attachment)?.count {
+                var caption = LessonStyle.attributes(.body)
+                caption[.font] = NSFont.systemFont(ofSize: 12, weight: .medium)
+                caption[.foregroundColor] = NSColor.secondaryLabelColor
+                let name = url.deletingPathExtension().lastPathComponent
+                pictures.append(NSAttributedString(string: "Diapositives « \(name) » · \(pages) page\(pages > 1 ? "s" : "")\n", attributes: caption))
+            }
         }
         guard pictures.length > 0 else { return }
         let range = textView.selectedRange()

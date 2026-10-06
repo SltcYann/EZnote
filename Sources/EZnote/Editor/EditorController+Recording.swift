@@ -11,10 +11,10 @@ extension EditorController {
             guard !isWorking, let storage, let textView else { return }
             recording = .preparing
             let id = UUID().uuidString
+            recorder.onVolatile = { [weak self] in self?.showVolatile($0) }
+            recorder.onFinal = { [weak self] text, start, end in self?.appendFinal(text, from: start, to: end) }
             Task {
                 do {
-                    recorder.onVolatile = { [weak self] in self?.showVolatile($0) }
-                    recorder.onFinal = { [weak self] text, start, end in self?.appendFinal(text, from: start, to: end) }
                     try await recorder.start(vocabulary: vocabulary(), audioURL: AudioStore.url(for: id))
                     audioID = id
                     pendingMarks = []
@@ -24,6 +24,7 @@ extension EditorController {
                     beginTranscript()
                     registerTranscriptUndo(original: original)
                     recording = .on(since: .now)
+                    startOutline()
                 } catch {
                     recording = .off
                     report(error)
@@ -46,6 +47,8 @@ extension EditorController {
     func stopRecording() async {
         guard case .on = recording else { return }
         await recorder.stop()
+        outlineTask?.cancel()
+        outlineTask = nil
         writeTranscript { storage, attributes in
             storage.deleteCharacters(in: NSRange(location: transcriptEnd, length: volatileLength))
             volatileLength = 0
@@ -74,6 +77,8 @@ extension EditorController {
         recorder.onVolatile = nil
         recorder.onFinal = nil
         Task { await recorder.stop() }
+        outlineTask?.cancel()
+        outlineTask = nil
         volatileLength = 0
         pendingMarks = []
         recording = .off
@@ -91,6 +96,7 @@ extension EditorController {
             heading.append(NSAttributedString(string: "Cours enregistré · \(date)\n", attributes: LessonStyle.attributes(.subheading)))
             storage.append(heading)
             transcriptEnd = storage.length
+            transcriptStart = storage.length
             volatileLength = 0
         }
     }
@@ -124,9 +130,26 @@ extension EditorController {
                 storage.insert(attributed, at: transcriptEnd)
                 transcriptEnd += attributed.length
             }
+            // Le prof insiste (« ça tombe à l'examen », « retenez bien »…) : marque-page Important automatique.
+            if Self.isEmphasis(text), !pendingMarks.contains(where: { $0.mark == .important && $0.time <= end }) {
+                pendingMarks.append((.important, start.isFinite ? start : 0))
+            }
             // Marque-page posé pendant cette phrase : juste après elle.
             flushMarks(upTo: end.isFinite ? end : .infinity, in: storage, attributes: attributes)
         }
+    }
+
+    /// Phrases par lesquelles un professeur signale ce qui compte.
+    private static let emphasis = try! NSRegularExpression(pattern: [
+        #"tomb\w* (à|a|au|en) l'?(examen|exam|partiel|contrôle|bac|concours|ds)"#,
+        #"(à|a) (bien )?retenir"#, #"retene[zs]"#, #"retenir (bien|absolument)"#,
+        #"(c'est|ceci est|ça c'est) (très |vraiment |super )?important"#, #"(par|à) cœur"#,
+        #"(notez|soulignez|surlignez) (bien|ça|cela)"#, #"je (vous )?le demanderai"#,
+        #"question (classique|d'examen|de cours)"#,
+    ].joined(separator: "|"), options: [.caseInsensitive])
+
+    static func isEmphasis(_ text: String) -> Bool {
+        emphasis.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) != nil
     }
 
     /// Insère au bout de la transcription les marque-pages posés avant `time` (en secondes de cours).
@@ -169,6 +192,33 @@ extension EditorController {
         guard case .on = recording, !writingTranscript, let storage else { return }
         if range.location < transcriptEnd { transcriptEnd = max(range.location, transcriptEnd + delta) }
         transcriptEnd = min(transcriptEnd, storage.length - volatileLength)
+    }
+
+    // MARK: Plan en direct
+
+    /// Toutes les 90 s, si le prof a assez parlé, l'IA relit la transcription et met le plan à jour.
+    private func startOutline() {
+        outline = []
+        outlineTask?.cancel()
+        outlineTask = Task { [weak self] in
+            var lastLength = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(90))
+                guard let self, case .on = self.recording, let storage = self.storage else { return }
+                let end = min(self.transcriptEnd, storage.length)
+                guard end > self.transcriptStart else { continue }
+                let transcript = (storage.string as NSString)
+                    .substring(with: NSRange(location: self.transcriptStart, length: end - self.transcriptStart))
+                guard transcript.count - lastLength >= 400 else { continue }
+                lastLength = transcript.count
+                let request = AIRequest(system: AssistPrompt.outline,
+                                        user: self.context.promptBlock + "<transcription>\n" + String(transcript.suffix(15_000)) + "\n</transcription>",
+                                        webSearch: false, maxTokens: 1500)
+                if let text = try? await AI.text(request), let titles = try? AI.json([String].self, from: text), !titles.isEmpty {
+                    self.outline = titles
+                }
+            }
+        }
     }
 
     // MARK: Réécoute

@@ -6,35 +6,6 @@ extension UTType {
     static let ezNote = UTType(exportedAs: "local.eznote.note")
 }
 
-/// Ce que le document sait de son cours, en plus du texte.
-struct DocumentInfo: Codable, Equatable {
-    /// Matière (« Droit constitutionnel »), saisie ou déduite par l'IA. Sert aussi à ranger la bibliothèque.
-    var subject = ""
-    /// Contexte du cours écrit par l'élève (« Cours de M. Durand, chapitre 3… »).
-    var context = ""
-    /// Fiches de révision, avec leur calendrier de révision espacée.
-    var cards: [Flashcard] = []
-}
-
-/// Une fiche question / réponse, révisée selon le système de Leitner (boîtes 0 à 5).
-struct Flashcard: Codable, Equatable, Identifiable {
-    var id = UUID()
-    var question: String
-    var answer: String
-    var box = 0
-    var due = Date.now
-
-    /// Intervalle avant la prochaine révision pour chaque boîte, en jours.
-    static let intervals: [Double] = [0, 1, 3, 7, 16, 35]
-
-    var isDue: Bool { due <= .now }
-
-    mutating func review(knew: Bool) {
-        box = knew ? min(box + 1, Self.intervals.count - 1) : 0
-        due = Date.now.addingTimeInterval(Self.intervals[box] * 86_400)
-    }
-}
-
 struct NoteSnapshot {
     var text: NSAttributedString
     var info: DocumentInfo
@@ -42,7 +13,9 @@ struct NoteSnapshot {
 
 /// Un document EZnote. Le texte vit dans un `NSTextStorage` partagé avec l'éditeur :
 /// aucune copie à chaque frappe, seulement à l'enregistrement.
-final class EZDocument: ReferenceFileDocument {
+/// `@unchecked Sendable` : le texte n'est modifié que sur le fil principal ; l'enregistrement travaille sur
+/// une copie (`snapshot`).
+final class EZDocument: ReferenceFileDocument, @unchecked Sendable {
     static var readableContentTypes: [UTType] { [.ezNote, .flatRTFD, .rtf, .plainText] }
     static var writableContentTypes: [UTType] { [.ezNote, .rtf] }
 
@@ -171,19 +144,29 @@ enum NoteFile {
         return try JSONEncoder().encode(payload)
     }
 
-    /// Photos collées en TIFF ou PNG de plusieurs Mo : réenregistrées en JPEG (2400 px au plus).
+    /// Pièces jointes prêtes à enregistrer : seulement leur fichier (l'image affichée, redimensionnée par
+    /// l'éditeur, ferait réencoder chaque image), et les grosses photos (TIFF, plus de 1,5 Mo) en JPEG.
     private static func compressImages(_ text: NSMutableAttributedString) {
         text.enumerateAttribute(.attachment, in: NSRange(location: 0, length: text.length)) { value, range, _ in
             guard let attachment = value as? NSTextAttachment else { return }
-            let name = attachment.fileWrapper?.preferredFilename?.lowercased() ?? ""
-            let size = attachment.fileWrapper?.regularFileContents?.count ?? Int.max
-            guard !(name.hasSuffix(".jpg") || name.hasSuffix(".jpeg")) || size > 3_000_000,
-                  let image = LessonStyle.image(of: attachment), let jpeg = jpeg(image, maxSide: 2400) else { return }
-            let wrapper = FileWrapper(regularFileWithContents: jpeg)
-            wrapper.preferredFilename = "image.jpg"
-            let compact = NSTextAttachment(fileWrapper: wrapper)
-            compact.bounds = attachment.bounds
-            text.addAttribute(.attachment, value: compact, range: range)
+            var wrapper = attachment.fileWrapper
+            if wrapper?.regularFileContents == nil, let image = attachment.image, let png = image.tiffRepresentation
+                .flatMap(NSBitmapImageRep.init(data:))?.representation(using: .png, properties: [:]) {
+                wrapper = FileWrapper(regularFileWithContents: png)
+                wrapper?.preferredFilename = "image.png"
+            }
+            guard let data = wrapper?.regularFileContents else { return }
+            let name = wrapper?.preferredFilename?.lowercased() ?? ""
+            // Les PDF de diapositives restent des PDF ; les schémas et petites images restent nets.
+            let heavy = !Slides.isPDF(data) && (name.hasSuffix(".tiff") || name.hasSuffix(".tif") || data.count > 1_500_000)
+            if heavy, let image = NSImage(data: data), let jpeg = jpeg(image, maxSide: 2400) {
+                wrapper = FileWrapper(regularFileWithContents: jpeg)
+                wrapper?.preferredFilename = "image.jpg"
+            }
+            guard let wrapper else { return }
+            let clean = NSTextAttachment(fileWrapper: wrapper)
+            clean.bounds = attachment.bounds
+            text.addAttribute(.attachment, value: clean, range: range)
         }
     }
 

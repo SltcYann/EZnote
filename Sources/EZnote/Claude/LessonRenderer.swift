@@ -17,6 +17,7 @@ enum LessonRenderer {
     }
 
     /// `images` : les images des notes, dans l'ordre ; « [Image n] » seul sur sa ligne les replace dans la leçon.
+    @MainActor
     static func render(_ markdown: String, author: String = "Claude", images: [NSTextAttachment] = []) -> NSAttributedString {
         let out = NSMutableAttributedString()
         var addition: ClaudeAddition?
@@ -32,12 +33,33 @@ enum LessonRenderer {
             var line = MathText.convertInline(raw.trimmingCharacters(in: .whitespaces))
             if line.hasPrefix("#"), let marker = line.range(of: ":::") { line = String(line[marker.lowerBound...]) }
 
+            // Schéma « :::schema type Titre » … « ::: » : dessiné par l'app, dans un contour à part.
+            if line.lowercased().hasPrefix(":::schema") {
+                var body: [String] = []
+                var closed = false
+                while let next = lines.popFirst() {
+                    if next.trimmingCharacters(in: .whitespaces) == ":::" { closed = true; break }
+                    body.append(next)
+                }
+                // Encore en cours d'écriture : on l'affichera une fois complet.
+                guard closed, let schema = Schema(header: String(line.dropFirst(9)).trimmingCharacters(in: .whitespaces), lines: body),
+                      let attachment = schema.attachment() else { continue }
+                let picture = NSMutableAttributedString(attachment: attachment)
+                picture.append(NSAttributedString(string: "\n"))
+                let style = LessonStyle.paragraph(.body)
+                style.alignment = .center
+                style.lineHeightMultiple = 1
+                picture.addAttributes([.paragraphStyle: style, .font: LessonStyle.bodyFont,
+                                       .ezAddition: addition ?? ClaudeAddition(kind: "Schéma", author: author)],
+                                      range: NSRange(location: 0, length: picture.length))
+                out.append(picture)
+                continue
+            }
+
             if line.hasPrefix(":::") {
                 let rest = line.dropFirst(3).trimmingCharacters(in: .whitespaces)
                 if rest.lowercased().hasPrefix("claude") {
-                    let words = rest.dropFirst(6).trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 1)
-                    let first = words.first.map(String.init) ?? ""
-                    let label = words.joined(separator: " ")
+                    let label = rest.dropFirst(6).trimmingCharacters(in: .whitespaces)
                     // « À retenir » fait deux mots.
                     let kinds = ["À retenir", "A retenir", "Précision", "Définition", "Exemple", "Explication", "Attention"]
                     let match = kinds.first { label.lowercased().hasPrefix($0.lowercased()) }
@@ -53,13 +75,13 @@ enum LessonRenderer {
             }
             if line.isEmpty { continue }
 
-            // « [Image 2] » seul sur sa ligne : on replace l'image des notes.
-            if line.hasPrefix("[Image "), line.hasSuffix("]"),
-               let n = Int(line.dropFirst(7).dropLast()), n >= 1, n <= images.count {
+            // « [Image 2] » ou « [Diapos 3] » seul sur sa ligne : on replace l'image ou le PDF des notes.
+            if let n = Self.attachmentNumber(in: line), n >= 1, n <= images.count {
                 let picture = NSMutableAttributedString(attachment: images[n - 1])
                 picture.append(NSAttributedString(string: "\n"))
                 let style = LessonStyle.paragraph(.body)
                 style.alignment = .center
+                style.lineHeightMultiple = 1
                 picture.addAttributes([.paragraphStyle: style, .font: LessonStyle.bodyFont],
                                       range: NSRange(location: 0, length: picture.length))
                 if let addition { picture.addAttribute(.ezAddition, value: addition, range: NSRange(location: 0, length: picture.length)) }
@@ -106,6 +128,16 @@ enum LessonRenderer {
         }
         if out.string.hasSuffix("\n") { out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1)) }
         return out
+    }
+
+    /// Numéro d'un marqueur « [Image n] » / « [Diapos n …] » occupant toute la ligne.
+    private static func attachmentNumber(in line: String) -> Int? {
+        guard line.hasSuffix("]") else { return nil }
+        for prefix in ["[Image ", "[Diapos "] where line.hasPrefix(prefix) {
+            let rest = line.dropFirst(prefix.count).dropLast()
+            return Int(rest.prefix { $0.isNumber })
+        }
+        return nil
     }
 
     /// **gras**, *italique* et `code`. Un « * » entouré d'espaces reste un astérisque.
@@ -210,12 +242,19 @@ enum NotesExporter {
 
             var line = ""
             text.enumerateAttributes(in: content) { attributes, run, _ in
-                // Image : « [Image n] », l'image part avec le message.
+                // Image : « [Image n] » ; PDF de diapositives : « [Diapos n] », ses pages partent en images.
                 if let attachment = attributes[.attachment] as? NSTextAttachment {
-                    if let image = LessonStyle.image(of: attachment), let jpeg = AI.jpeg(image) {
+                    if let pages = Slides.pages(of: attachment) {
+                        let jpegs = pages.compactMap(AI.jpeg)
+                        guard !jpegs.isEmpty else { return }
+                        images += jpegs
+                        attachments.append(attachment)
+                        let name = attachment.fileWrapper?.preferredFilename ?? "diapositives.pdf"
+                        line += "[Diapos \(attachments.count) : « \(name) », \(jpegs.count) page\(jpegs.count > 1 ? "s" : "")]"
+                    } else if let image = LessonStyle.image(of: attachment), let jpeg = AI.jpeg(image) {
                         images.append(jpeg)
                         attachments.append(attachment)
-                        line += "[Image \(images.count)]"
+                        line += "[Image \(attachments.count)]"
                     }
                     return
                 }

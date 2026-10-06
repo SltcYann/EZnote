@@ -33,6 +33,7 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
     var task: Task<Void, Never>?
     /// Nom du fichier : indice sur la matière pour l'IA.
     var documentTitle: String?
+    var fileURL: URL?
 
     // Enregistrement du cours
     let recorder = LectureRecorder()
@@ -42,6 +43,11 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
     var volatileLength = 0
     var writingTranscript = false
     var audioID: String?
+    /// Plan du cours, mis à jour par l'IA pendant l'enregistrement.
+    @Published var outline: [String] = []
+    @Published var showsOutline = true
+    var transcriptStart = 0
+    var outlineTask: Task<Void, Never>?
     /// Marque-pages posés pendant le cours, en attente de la phrase prononcée à ce moment-là.
     var pendingMarks: [(mark: LessonStyle.Mark, time: Double)] = []
 
@@ -143,6 +149,25 @@ final class EditorController: NSObject, ObservableObject, NSTextViewDelegate, NS
             items.append(MenuAction.item("Poser une question à \(AI.authorName)…", symbol: "questionmark.bubble") { [weak self] in
                 self?.askAboutSelection()
             })
+            // Liens entre cours : les autres cours qui parlent de la notion sélectionnée.
+            let term = (view.string as NSString).substring(with: view.selectedRange()).trimmingCharacters(in: .whitespacesAndNewlines)
+            if term.count >= 3, term.count <= 60 {
+                let others = LibraryIndex.courses(mentioning: term, excluding: fileURL)
+                let links = NSMenuItem(title: "« \(term.prefix(30)) » dans mes autres cours", action: nil, keyEquivalent: "")
+                links.image = NSImage(systemSymbolName: "link", accessibilityDescription: nil)
+                let submenu = NSMenu()
+                if others.isEmpty {
+                    submenu.addItem(withTitle: "Aucun autre cours n'en parle", action: nil, keyEquivalent: "").isEnabled = false
+                }
+                for course in others.prefix(12) {
+                    let label = course.subject.isEmpty ? course.title : "\(course.title) — \(course.subject)"
+                    submenu.addItem(MenuAction.item(label, symbol: "doc.text") {
+                        NSDocumentController.shared.openDocument(withContentsOf: course.url, display: true) { _, _, _ in }
+                    })
+                }
+                links.submenu = submenu
+                items.append(links)
+            }
         }
         items.append(MenuAction.item("Marquer comme important", symbol: "star") { [weak self] in self?.insertMark(.important) })
         items.append(MenuAction.item("Marquer « pas compris »", symbol: "questionmark.circle") { [weak self] in self?.insertMark(.unclear) })

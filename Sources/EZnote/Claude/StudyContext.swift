@@ -5,6 +5,7 @@ struct StudyContext {
     var title: String?
     var subject = ""
     var course = ""
+    var depth = DocumentInfo.Depth.normal
     var level = UserDefaults.standard.string(forKey: "studyLevel") ?? ""
     var studies = UserDefaults.standard.string(forKey: "studyField") ?? ""
     var aboutMe = UserDefaults.standard.string(forKey: "studyContext") ?? ""
@@ -15,6 +16,7 @@ struct StudyContext {
         self.title = generic ? nil : title
         subject = info.subject
         course = info.context
+        depth = info.depth
     }
 
     /// Bloc à placer en tête du message à l'IA (vide s'il n'y a rien à dire).
@@ -30,6 +32,11 @@ struct StudyContext {
         add("Niveau d'études de l'élève", level)
         add("Études de l'élève", studies)
         add("Ce que l'élève dit de lui", aboutMe)
+        switch depth {
+        case .simple: lines.append("Niveau d'explication voulu : simple")
+        case .deep: lines.append("Niveau d'explication voulu : approfondi")
+        case .normal: break
+        }
         return lines.isEmpty ? "" : "<contexte>\n" + lines.joined(separator: "\n") + "\n</contexte>\n\n"
     }
 
@@ -50,6 +57,11 @@ enum SharedPrompt {
     et le niveau attendu, et pour choisir des exemples adaptés. Si tu disposes de la recherche web et que le \
     contexte cite une école, une formation, un programme, un cours, un professeur ou un livre, tu peux chercher \
     sur le web pour mieux comprendre ce contexte (programme, niveau, vocabulaire du domaine) avant de répondre.
+
+    Niveau d'explication : « simple » veut dire des phrases courtes, un vocabulaire courant, chaque terme \
+    technique expliqué et davantage d'exemples concrets ; « approfondi » veut dire plus de mécanismes, de \
+    nuances, de liens avec d'autres notions et de précisions de niveau supérieur. Sans indication, vise le \
+    niveau de l'élève.
 
     Formules : écris-les en Unicode lisible (x², H₂O, √, ∑, ∫, α, ≤, →) ; pour une formule complexe, utilise \
     du LaTeX simple entre $…$, que l'application convertit.

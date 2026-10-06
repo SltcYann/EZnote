@@ -10,9 +10,7 @@ enum UY {
     static let inkTertiary = Color(light: 0x6E6E73, dark: 0x8E8E93)
     static let track = Color(light: .black.withAlphaComponent(0.08), dark: .white.withAlphaComponent(0.2))
 
-    static let blue = Color(light: 0x0A6CFF, dark: 0x0A84FF)
     static let green = Color(light: 0x1EA64A, dark: 0x30D158)
-    static let accent = blue
     static let focusRing = Color(light: 0x0A6CFF, dark: 0x5AC8FA)
     /// Orange de Claude : le bouton EZifier et le contour des ajouts de Claude.
     static let claude = Color(nsColor: .claude)
@@ -21,15 +19,14 @@ enum UY {
     static let danger = Color(light: 0xD70015, dark: 0xFF453A)
 
     // MARK: Espacements
-    static let space4: CGFloat = 4, space8: CGFloat = 8, space12: CGFloat = 12, space14: CGFloat = 14
+    static let space8: CGFloat = 8, space12: CGFloat = 12, space14: CGFloat = 14
     static let space18: CGFloat = 18, space22: CGFloat = 22, space24: CGFloat = 24, space32: CGFloat = 32
 
     // MARK: Rayons
-    static let radiusField: CGFloat = 14, radiusTile: CGFloat = 18, radiusRow: CGFloat = 20
-    static let radiusPanel: CGFloat = 28, radiusSheet: CGFloat = 32, radiusCapsule: CGFloat = 999
+    static let radiusField: CGFloat = 14, radiusTile: CGFloat = 18
+    static let radiusPanel: CGFloat = 28, radiusCapsule: CGFloat = 999
 
     // MARK: Typographie
-    static let title = Font.system(size: 28, weight: .bold)
     static let title3 = Font.system(size: 20, weight: .semibold)
     static let headline = Font.system(size: 17, weight: .semibold)
     static let body = Font.system(size: 17)
@@ -39,7 +36,6 @@ enum UY {
 
     // MARK: Mouvement
     static func ease(_ d: Double = 0.4) -> Animation { .smooth(duration: d) }
-    static let press = Animation.snappy(duration: 0.2)
     static let mood = Animation.easeInOut(duration: 0.9)
 }
 

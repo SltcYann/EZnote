@@ -13,11 +13,18 @@ struct ContentView: View {
             MeshBackground(mood: editor.isWorking ? .claude : .calm)
             EditorView(document: document, controller: editor)
                 .uyEdgeFade(28)
+            if editor.isRecording && editor.showsOutline {
+                OutlinePanel(titles: editor.outline)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .padding(UY.space18)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
             Group {
                 if editor.isWorking {
                     StatusPill(phase: editor.phase, author: editor.author)
                 } else if editor.isRecording {
                     RecordingPill(recording: editor.recording,
+                                  showsOutline: $editor.showsOutline,
                                   mark: { editor.insertMark($0) },
                                   stop: { editor.toggleRecording() })
                 } else if editor.isPlaying {
@@ -30,12 +37,18 @@ struct ContentView: View {
         .animation(UY.ease(0.35), value: editor.isWorking)
         .animation(UY.ease(0.35), value: editor.isRecording)
         .animation(UY.ease(0.35), value: editor.isPlaying)
+        .animation(UY.ease(0.35), value: editor.showsOutline)
+        .animation(UY.ease(0.35), value: editor.outline)
         .onAppear {
             SaveFolder.apply()
             AppAppearance.apply()
             editor.documentTitle = fileURL?.deletingPathExtension().lastPathComponent
+            editor.fileURL = fileURL
         }
-        .onChange(of: fileURL) { _, url in editor.documentTitle = url?.deletingPathExtension().lastPathComponent }
+        .onChange(of: fileURL) { _, url in
+            editor.documentTitle = url?.deletingPathExtension().lastPathComponent
+            editor.fileURL = url
+        }
         .onChange(of: document.info) { _, _ in editor.markDirty() }
         .focusedSceneObject(editor)
         .frame(minWidth: 680, minHeight: 480)
@@ -114,7 +127,7 @@ struct ContentView: View {
                 editor.toggleList(LessonStyle.numbered)
             }
             Menu {
-                Button("Image…", systemImage: "photo") { editor.insertImage() }
+                Button("Image ou PDF de diapos…", systemImage: "photo.on.rectangle") { editor.insertImage() }
                 Button("Marquer comme important", systemImage: "star") { editor.insertMark(.important) }
                 Button("Marquer « pas compris »", systemImage: "questionmark.circle") { editor.insertMark(.unclear) }
             } label: {
@@ -191,6 +204,16 @@ private struct ContextPopover: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             GlassField(placeholder: "Matière (ex. Droit constitutionnel)", text: $document.info.subject)
+            VStack(spacing: 6) {
+                Text("Niveau d'explication").font(UY.caption).foregroundStyle(UY.inkSecondary)
+                Picker("", selection: $document.info.depth) {
+                    ForEach(DocumentInfo.Depth.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .tint(UY.claude)
+                .frame(width: 280)
+            }
             ContextEditor(text: $document.info.context,
                           placeholder: "Professeur, chapitre, livre, sujet du cours, mots techniques…")
                 .frame(height: 130)
@@ -229,6 +252,7 @@ struct ContextEditor: View {
 /// Capsule en bas de la fenêtre pendant l'enregistrement du cours : durée, marque-pages, Arrêter.
 private struct RecordingPill: View {
     let recording: EditorController.Recording
+    @Binding var showsOutline: Bool
     var mark: (LessonStyle.Mark) -> Void
     var stop: () -> Void
     @State private var pulse = false
@@ -252,6 +276,9 @@ private struct RecordingPill: View {
                 Button { mark(.unclear) } label: { Label("Pas compris", systemImage: "questionmark") }
                     .buttonStyle(.glass)
                     .help("Je n'ai pas compris : l'IA l'expliquera (⌃⌘U)")
+                Button { showsOutline.toggle() } label: { Label("Plan", systemImage: "list.bullet.indent") }
+                    .buttonStyle(.glass)
+                    .help("Afficher ou masquer le plan du cours en direct")
             } else {
                 Text("Préparation du micro…")
             }
@@ -271,6 +298,45 @@ private struct RecordingPill: View {
     private static func duration(_ seconds: TimeInterval) -> String {
         let s = Int(seconds)
         return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+    }
+}
+
+/// Plan du cours en direct, à droite de la page pendant l'enregistrement.
+private struct OutlinePanel: View {
+    let titles: [String]
+
+    var body: some View {
+        VStack(spacing: UY.space12) {
+            Label("Plan du cours", systemImage: "list.bullet.indent")
+                .font(UY.headline)
+                .foregroundStyle(UY.claudeStrong)
+            if titles.isEmpty {
+                Text("Le plan apparaît après quelques minutes de cours.")
+                    .font(UY.footnote)
+                    .foregroundStyle(UY.inkSecondary)
+                    .multilineTextAlignment(.center)
+            } else {
+                VStack(spacing: UY.space8) {
+                    ForEach(Array(titles.enumerated()), id: \.offset) { index, title in
+                        HStack(spacing: UY.space8) {
+                            Text("\(index + 1)")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .frame(width: 22, height: 22)
+                                .background(Circle().fill(UY.claude))
+                            Text(title)
+                                .font(UY.subheadline)
+                                .foregroundStyle(UY.ink)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+                }
+            }
+        }
+        .padding(UY.space18)
+        .frame(width: 250)
+        .uyGlass(radius: UY.radiusPanel)
     }
 }
 
